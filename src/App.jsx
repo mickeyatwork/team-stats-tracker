@@ -290,29 +290,37 @@ export default function App() {
 
   if (!session) {
     return (
-      <div className="app-container" style={{justifyContent: 'center'}}>
-        <div className="view-container">
-          <div className="card">
-            <h1 className="title-lg text-gradient" style={{textAlign: 'center', marginBottom: '2rem'}}>Youth Football Manager</h1>
+        <div className="app-container" style={{justifyContent: 'center'}}>
+          <div className="view-container">
+            <div className="card">
+              <h1 className="title-lg text-gradient" style={{textAlign: 'center', marginBottom: '2rem'}}>Youth Football Manager</h1>
+
+              {/* Temporarily hidden Sign Up toggle for auth maintenance
             <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', backgroundColor: 'var(--color-border-light)', padding: '0.25rem', borderRadius: 'var(--radius-lg)'}}>
               <button onClick={() => setIsLogin(true)} style={{flex: 1, padding: '0.5rem', border: 'none', background: isLogin ? 'var(--color-bg-card)' : 'transparent', borderRadius: 'var(--radius-md)', fontWeight: 600, boxShadow: isLogin ? 'var(--shadow-sm)' : 'none', cursor: 'pointer'}}>Login</button>
               <button onClick={() => setIsLogin(false)} style={{flex: 1, padding: '0.5rem', border: 'none', background: !isLogin ? 'var(--color-bg-card)' : 'transparent', borderRadius: 'var(--radius-md)', fontWeight: 600, boxShadow: !isLogin ? 'var(--shadow-sm)' : 'none', cursor: 'pointer'}}>Sign Up</button>
             </div>
-            <form onSubmit={handleAuth}>
-              <div className="input-group">
-                <label className="label">Email</label>
-                <input type="email" required className="input" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} />
-              </div>
-              <div className="input-group">
-                <label className="label">Password</label>
-                <input type="password" required className="input" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
-              </div>
-              {authError && <div style={{color: 'var(--color-danger)', fontSize: '0.875rem', marginBottom: '1rem', textAlign: 'center'}}>{authError}</div>}
-              <button type="submit" disabled={authLoading} className="btn btn-primary">{authLoading ? 'Loading...' : (isLogin ? 'Login' : 'Sign Up')}</button>
-            </form>
+            */}
+
+              <form onSubmit={handleAuth}>
+                <div className="input-group">
+                  <label className="label">Email</label>
+                  <input type="email" required className="input" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} />
+                </div>
+                <div className="input-group">
+                  <label className="label">Password</label>
+                  <input type="password" required className="input" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
+                </div>
+                {authError && <div style={{color: 'var(--color-danger)', fontSize: '0.875rem', marginBottom: '1rem', textAlign: 'center'}}>{authError}</div>}
+
+                {/* Updated submit button to only say Login */}
+                <button type="submit" disabled={authLoading} className="btn btn-primary">
+                  {authLoading ? 'Loading...' : 'Login'}
+                </button>
+              </form>
+            </div>
           </div>
         </div>
-      </div>
     );
   }
 
