@@ -169,7 +169,7 @@ export default function App() {
       user_id: session.user.id,
       date: new Date(newMatchDate).toISOString(),
       opponent: newMatchOpponent,
-      competition_type: newMatchCompType,
+      competition: newMatchCompType,
       tournament_name: newMatchCompType === 'Tournament' ? newMatchTournamentName : null,
       match_variant: newMatchVariant,
       team_goals: 0,
@@ -514,7 +514,7 @@ export default function App() {
                   </div>
                   <div className="badge badge-blue">
                     <Flag size={12} />
-                    {match.competition_type === 'Tournament' ? match.tournament_name : match.competition_type || 'Friendly'}
+                    {match.competition === 'Tournament' ? match.tournament_name : match.competition || 'Friendly'}
                   </div>
                 </div>
 
@@ -567,7 +567,7 @@ export default function App() {
     return (
       <div className="app-container">
         <TopNav
-          title={activeMatch.competition_type === 'Tournament' ? activeMatch.tournament_name : `${activeMatch.competition_type || 'Friendly'} Match`}
+          title={activeMatch.competition === 'Tournament' ? activeMatch.tournament_name : `${activeMatch.competition || 'Friendly'} Match`}
           onBack={() => { setActiveMatchId(null); setCurrentView('matches'); }}
         />
         <div className="view-container">
