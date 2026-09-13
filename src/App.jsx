@@ -164,44 +164,49 @@ export default function App() {
     const initialStats = {};
     newMatchSquadSelection.forEach(pid => { initialStats[pid] = { goals: 0, assists: 0 }; });
 
-    const newMatch = {
-      id: Date.now().toString(),
+    const dbMatch = {
       user_id: session.user.id,
       date: new Date(newMatchDate).toISOString(),
       opponent: newMatchOpponent,
       competition: newMatchCompType,
-      tournament_name: newMatchCompType === 'Tournament' ? newMatchTournamentName : null,
+      tournament: newMatchCompType === 'Tournament' ? newMatchTournamentName : null,
       match_variant: newMatchVariant,
       team_goals: 0,
       opponent_goals: 0,
       hide_score: newMatchHideScore,
-      status: 'active',
-      stats: initialStats
+      status: 'active'
     };
 
-    setMatches([newMatch, ...matches]);
-    setShowNewMatchCard(false);
-    setNewMatchOpponent('');
-    setNewMatchHideScore(false);
-    setNewMatchDate(new Date().toISOString().split('T')[0]);
-    setActiveMatchId(newMatch.id);
-    setCurrentView('match_tracker');
+    const { data, error } = await supabase.from('matches').insert([dbMatch]).select();
 
-    const dbMatch = { ...newMatch };
-    delete dbMatch.stats;
-    delete dbMatch.id;
-    const { data } = await supabase.from('matches').insert([dbMatch]).select();
+    if (error) {
+      console.error('Match insert error:', error);
+      alert(`Failed to save match: ${error.message}`);
+      return; // Stop here if it fails
+    }
 
     if (data && data[0]) {
+      const newDbMatch = data[0];
+
       const statsToInsert = newMatchSquadSelection.map(pid => ({
-        match_id: data[0].id,
+        match_id: newDbMatch.id,
         player_id: pid,
         goals: 0,
         assists: 0
       }));
       await supabase.from('match_stats').insert(statsToInsert);
-      setMatches(prev => prev.map(m => m.id === newMatch.id ? { ...m, id: data[0].id } : m));
-      setActiveMatchId(data[0].id);
+
+      const matchWithStats = { ...newDbMatch, stats: initialStats };
+      setMatches([matchWithStats, ...matches]);
+
+      setShowNewMatchCard(false);
+      setNewMatchOpponent('');
+      setNewMatchHideScore(false);
+      setNewMatchDate(new Date().toISOString().split('T')[0]);
+
+      // Navigate to the tracker using the real database ID
+      setActiveMatchId(newDbMatch.id);
+      setCurrentView('match_tracker');
     }
   };
 
@@ -514,7 +519,7 @@ export default function App() {
                   </div>
                   <div className="badge badge-blue">
                     <Flag size={12} />
-                    {match.competition === 'Tournament' ? match.tournament_name : match.competition || 'Friendly'}
+                    {match.competition === 'Tournament' ? match.tournament : match.competition || 'Friendly'}
                   </div>
                 </div>
 
@@ -567,7 +572,7 @@ export default function App() {
     return (
       <div className="app-container">
         <TopNav
-          title={activeMatch.competition === 'Tournament' ? activeMatch.tournament_name : `${activeMatch.competition || 'Friendly'} Match`}
+          title={activeMatch.competition === 'Tournament' ? activeMatch.tournament : `${activeMatch.competition || 'Friendly'} Match`}
           onBack={() => { setActiveMatchId(null); setCurrentView('matches'); }}
         />
         <div className="view-container">
