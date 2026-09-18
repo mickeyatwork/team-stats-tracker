@@ -640,3 +640,397 @@ body {
   padding: 2rem;
   color: var(--color-text-muted);
 }
+
+/* Tab Navigation inside TopNav */
+.tab-container {
+  display: flex;
+  gap: 0.5rem;
+  border-top: 1px solid var(--color-border-light);
+  padding-top: 0.5rem;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 32rem;
+}
+
+.tab-container .nav-item {
+  flex-direction: row;
+  flex: 1;
+  justify-content: center;
+  padding: 0.6rem 0.5rem;
+  border-radius: var(--radius-lg);
+}
+
+/* Team Switcher & Dropdowns */
+.team-switcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  border: 1px solid var(--color-primary-light);
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.team-switcher-btn:hover {
+  background-color: var(--color-primary);
+  color: white;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.5rem;
+  background-color: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  min-width: 14rem;
+  z-index: 50;
+  overflow: hidden;
+  padding: 0.35rem 0;
+}
+
+.dropdown-header {
+  padding: 0.5rem 0.875rem 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  letter-spacing: 0.05em;
+}
+
+.dropdown-item {
+  width: 100%;
+  padding: 0.6rem 0.875rem;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: background var(--transition-fast);
+}
+
+.dropdown-item:hover {
+  background-color: var(--color-border-light);
+}
+
+.dropdown-item.active {
+  background-color: var(--color-primary-light);
+}
+
+.dropdown-item-title {
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--color-text-main);
+}
+
+.dropdown-item-subtitle {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.dropdown-divider {
+  height: 1px;
+  background-color: var(--color-border-light);
+  margin: 0.35rem 0;
+}
+
+/* Stat Cols (3 Columns: Goals, Assists, Saves) */
+.stat-cols-3 {
+  display: flex;
+  gap: 0.35rem;
+  width: 215px;
+  justify-content: flex-end;
+}
+
+.stat-col-header.saves {
+  color: #b45309;
+}
+
+.btn-stat-plus.saves {
+  background-color: #f59e0b;
+}
+
+.stat-player-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  margin-right: 0.5rem;
+}
+
+.stat-player-pos {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.stat-totals-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background-color: var(--color-border-light);
+  border-top: 2px solid var(--color-border);
+}
+
+.stat-totals-label {
+  font-weight: 800;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-total-cell {
+  width: 65px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 0.875rem;
+}
+.stat-total-cell.goals { color: var(--color-primary-dark); }
+.stat-total-cell.assists { color: var(--color-secondary-dark); }
+.stat-total-cell.saves { color: #b45309; }
+
+/* Stats Analytics Tab Layout */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.stat-card {
+  background-color: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+.stat-card-value {
+  font-size: 1.75rem;
+  font-weight: 900;
+  color: var(--color-text-main);
+  line-height: 1;
+  margin-bottom: 0.35rem;
+}
+
+.stat-card-subtitle {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.leaderboard-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 480px) {
+  .leaderboard-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.leaderboard-box {
+  background-color: var(--color-border-light);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+}
+
+.leaderboard-box-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.leaderboard-box-title.goals { color: var(--color-primary-dark); }
+.leaderboard-box-title.assists { color: var(--color-secondary-dark); }
+.leaderboard-box-title.saves { color: #b45309; }
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+}
+
+.leaderboard-row .rank {
+  font-weight: 800;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  width: 1.25rem;
+}
+
+.leaderboard-row .p-name {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leaderboard-row .p-score {
+  font-weight: 900;
+  font-size: 0.9rem;
+}
+.leaderboard-row .p-score.goals { color: var(--color-primary-dark); }
+.leaderboard-row .p-score.assists { color: var(--color-secondary-dark); }
+.leaderboard-row .p-score.saves { color: #b45309; }
+
+.empty-sub {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
+/* Stats Breakdown Table */
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.stats-table th {
+  background-color: var(--color-border-light);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.stats-table td {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.badge-pos {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-border-light);
+  color: var(--color-text-muted);
+}
+
+.badge-ft {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+}
+
+.badge-primary {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+/* Alerts */
+.alert {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 1rem;
+}
+.alert-danger {
+  background-color: #fee2e2;
+  color: var(--color-danger-dark);
+  border: 1px solid #fca5a5;
+}
+.alert-success {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  border: 1px solid #6ee7b7;
+}
+
+/* Auth Tab Switch */
+.tab-switch {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  background-color: var(--color-border-light);
+  padding: 0.25rem;
+  border-radius: var(--radius-lg);
+}
+
+.tab-switch-btn {
+  flex: 1;
+  padding: 0.5rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tab-switch-btn.active {
+  background-color: var(--color-bg-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-primary-dark);
+}
+
+.btn-icon-subtle {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-fast);
+}
+
+.btn-icon-subtle:hover {
+  color: var(--color-primary);
+}
+
+.text-muted-center {
+  text-align: center;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  color: var(--color-text-muted);
+}
+
