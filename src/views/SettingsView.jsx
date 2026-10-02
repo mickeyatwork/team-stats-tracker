@@ -25,6 +25,7 @@ export default function SettingsView({
   // Update Active Team Details
   const [teamNameInput, setTeamNameInput] = useState(teamInfo?.name || '');
   const [seasonInput, setSeasonInput] = useState(teamInfo?.season || '');
+  const [hidePositionsInput, setHidePositionsInput] = useState(teamInfo?.hide_positions || false);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
 
   // Add New Team Form Modal state inside settings
@@ -73,12 +74,24 @@ export default function SettingsView({
     try {
       const { error } = await supabase
         .from('team')
-        .update({ name: teamNameInput, season: seasonInput })
+        .update({ name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput })
         .eq('id', teamInfo.id);
 
-      if (error) throw error;
+      if (error) {
+        // Fallback if hide_positions column isn't created yet
+        if (error.message.includes('hide_positions')) {
+          const { error: fallbackError } = await supabase
+            .from('team')
+            .update({ name: teamNameInput, season: seasonInput })
+            .eq('id', teamInfo.id);
+          if (fallbackError) throw fallbackError;
+        } else {
+          throw error;
+        }
+      }
 
-      const updated = { ...teamInfo, name: teamNameInput, season: seasonInput };
+      const updated = { ...teamInfo, name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput };
+
       setTeamInfo(updated);
       setAllTeams(allTeams.map((t) => (t.id === teamInfo.id ? updated : t)));
       setTeamStatus({ loading: false, success: 'Team details updated!', error: null });
@@ -95,13 +108,34 @@ export default function SettingsView({
     const newTeamObj = {
       user_id: session.user.id,
       name: newTeamName,
-      season: newSeasonName
+      season: newSeasonName,
+      hide_positions: false
     };
 
     const { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
 
     if (error) {
-      alert(`Error adding team: ${error.message}`);
+      if (error.message.includes('hide_positions')) {
+        const { data: fallbackData, error: fallbackError } = await supabase.from('team').insert([{
+          user_id: session.user.id,
+          name: newTeamName,
+          season: newSeasonName
+        }]).select().single();
+        if (fallbackError) {
+          alert(`Error adding team: ${fallbackError.message}`);
+          setAddTeamLoading(false);
+          return;
+        }
+        if (fallbackData) {
+          setAllTeams([fallbackData, ...allTeams]);
+          setTeamInfo(fallbackData);
+          setShowAddTeamModal(false);
+          setNewTeamName('');
+          setNewSeasonName('');
+        }
+      } else {
+        alert(`Error adding team: ${error.message}`);
+      }
       setAddTeamLoading(false);
       return;
     }
@@ -156,6 +190,53 @@ export default function SettingsView({
                 placeholder="e.g. 2024/25"
                 required
               />
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '0.75rem 1rem',
+                background: 'var(--color-border-light)',
+                borderRadius: 'var(--radius-lg)',
+                marginBottom: '1rem'
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Hide Positions</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                  Don't require or show positions (e.g. for younger ages)
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHidePositionsInput((v) => !v)}
+                style={{
+                  width: '3rem',
+                  height: '1.75rem',
+                  borderRadius: '999px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'background 0.2s',
+                  background: hidePositionsInput ? 'var(--color-primary)' : 'var(--color-border)',
+                  position: 'relative'
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '0.2rem',
+                    left: hidePositionsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                    width: '1.35rem',
+                    height: '1.35rem',
+                    background: 'white',
+                    borderRadius: '50%',
+                    transition: 'left 0.2s',
+                    boxShadow: 'var(--shadow-sm)'
+                  }}
+                />
+              </button>
             </div>
 
             {teamStatus.error && <div className="alert alert-danger">{teamStatus.error}</div>}

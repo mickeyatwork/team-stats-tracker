@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
+import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X } from 'lucide-react';
 import TopNav from '../components/TopNav';
 
 export default function StatsView({
@@ -9,11 +9,15 @@ export default function StatsView({
   allTeams,
   onSelectTeam,
   onAddNewTeam,
-  setCurrentView
+  setCurrentView,
+  goalEvents = []
 }) {
   // Sort state for squad breakdown table
   const [sortField, setSortField] = useState('ga'); // default sort by G+A
   const [sortDirection, setSortDirection] = useState('desc'); // default descending
+  
+  // State for expanded leaderboard modal
+  const [expandedLeaderboard, setExpandedLeaderboard] = useState(null);
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -85,9 +89,17 @@ export default function StatsView({
 
     const playerList = Object.values(playerAgg);
 
-    const topScorers = [...playerList].sort((a, b) => b.goals - a.goals || b.appearances - a.appearances).slice(0, 3);
-    const topAssists = [...playerList].sort((a, b) => b.assists - a.assists || b.appearances - a.appearances).slice(0, 3);
-    const topSaves = [...playerList].sort((a, b) => b.saves - a.saves || b.appearances - a.appearances).slice(0, 3);
+    const fullScorers = [...playerList].sort((a, b) => b.goals - a.goals || b.appearances - a.appearances);
+    const topScorers = fullScorers.slice(0, 3);
+    
+    const fullAssists = [...playerList].sort((a, b) => b.assists - a.assists || b.appearances - a.appearances);
+    const topAssists = fullAssists.slice(0, 3);
+    
+    const fullSaves = [...playerList].sort((a, b) => b.saves - a.saves || b.appearances - a.appearances);
+    const topSaves = fullSaves.slice(0, 3);
+    
+    const fullInvolvements = [...playerList].sort((a, b) => (b.goals + b.assists) - (a.goals + a.assists) || b.appearances - a.appearances);
+    const topInvolvements = fullInvolvements.slice(0, 3);
 
     const winRate = played > 0 ? Math.round((wins / played) * 100) : 0;
 
@@ -104,9 +116,40 @@ export default function StatsView({
       playerList,
       topScorers,
       topAssists,
-      topSaves
+      topSaves,
+      topInvolvements,
+      fullScorers,
+      fullAssists,
+      fullSaves,
+      fullInvolvements
     };
   }, [matches, squad]);
+
+  const { topCombinations, fullCombinations } = useMemo(() => {
+    const combos = {};
+    goalEvents.forEach(e => {
+      if (!e.scorer_id || !e.assister_id) return;
+      const key = [e.scorer_id, e.assister_id].sort().join('__');
+      if (!combos[key]) {
+        combos[key] = { scorer_id: e.scorer_id, assister_id: e.assister_id, count: 0 };
+      }
+      combos[key].count += 1;
+    });
+
+    const full = Object.values(combos)
+      .sort((a, b) => b.count - a.count)
+      .map(c => {
+        const scorer = squad.find(p => p.id === c.scorer_id);
+        const assister = squad.find(p => p.id === c.assister_id);
+        return {
+          scorerName: scorer ? scorer.name : 'Unknown',
+          assisterName: assister ? assister.name : 'Unknown',
+          count: c.count
+        };
+      });
+
+    return { fullCombinations: full, topCombinations: full.slice(0, 5) };
+  }, [goalEvents, squad]);
 
   // Sort player list dynamically based on sortField and sortDirection
   const sortedPlayers = useMemo(() => {
@@ -221,9 +264,10 @@ export default function StatsView({
 
           <div className="leaderboard-grid">
             {/* Top Goals */}
-            <div className="leaderboard-box">
-              <div className="leaderboard-box-title goals">
-                <Target size={16} /> Top Goals
+            <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('goals')} style={{ cursor: 'pointer', position: 'relative' }}>
+              <div className="leaderboard-box-title goals" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span><Target size={16} /> Top Goals</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
               </div>
               {statsSummary.topScorers.filter((p) => p.goals > 0).length === 0 ? (
                 <div className="empty-sub">No goals recorded yet</div>
@@ -241,9 +285,10 @@ export default function StatsView({
             </div>
 
             {/* Top Assists */}
-            <div className="leaderboard-box">
-              <div className="leaderboard-box-title assists">
-                <Award size={16} /> Top Assists
+            <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('assists')} style={{ cursor: 'pointer', position: 'relative' }}>
+              <div className="leaderboard-box-title assists" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span><Award size={16} /> Top Assists</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
               </div>
               {statsSummary.topAssists.filter((p) => p.assists > 0).length === 0 ? (
                 <div className="empty-sub">No assists recorded yet</div>
@@ -260,10 +305,34 @@ export default function StatsView({
               )}
             </div>
 
+            {/* Top Goal Involvements */}
+            <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('involvements')} style={{ cursor: 'pointer', position: 'relative' }}>
+              <div className="leaderboard-box-title" style={{ color: 'var(--color-primary-dark)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span><Zap size={16} /> Goal Involvements</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
+              </div>
+              {statsSummary.topInvolvements.filter((p) => (p.goals + p.assists) > 0).length === 0 ? (
+                <div className="empty-sub">No involvements yet</div>
+              ) : (
+                statsSummary.topInvolvements
+                  .filter((p) => (p.goals + p.assists) > 0)
+                  .map((p, idx) => (
+                    <div key={p.id} className="leaderboard-row">
+                      <span className="rank">{idx + 1}.</span>
+                      <span className="p-name">{p.name}</span>
+                      <span className="p-score" style={{ color: 'var(--color-primary-dark)', background: 'var(--color-primary-light)' }}>
+                        {p.goals + p.assists}
+                      </span>
+                    </div>
+                  ))
+              )}
+            </div>
+
             {/* Top Saves */}
-            <div className="leaderboard-box">
-              <div className="leaderboard-box-title saves">
-                <Shield size={16} /> Top Saves
+            <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('saves')} style={{ cursor: 'pointer', position: 'relative' }}>
+              <div className="leaderboard-box-title saves" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span><Shield size={16} /> Top Saves</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
               </div>
               {statsSummary.topSaves.filter((p) => p.saves > 0).length === 0 ? (
                 <div className="empty-sub">No saves recorded yet</div>
@@ -281,6 +350,56 @@ export default function StatsView({
             </div>
           </div>
         </div>
+
+        {/* Top Combinations */}
+        {topCombinations.length > 0 && (
+          <div className="card mt-4" onClick={() => setExpandedLeaderboard('combinations')} style={{ cursor: 'pointer', position: 'relative' }}>
+            <h2 className="title-md mb-4 flex-between gap-2">
+              <span className="flex-row gap-2"><Heart size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Combinations</span></span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
+            </h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+              Scorer &amp; assister pairs with the most linked goals this season.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {topCombinations.map((combo, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem',
+                    padding: '0.75rem 1rem',
+                    borderRadius: 'var(--radius-lg)',
+                    background: idx === 0 ? 'var(--color-primary-light)' : 'var(--color-bg-body)',
+                    border: '1px solid',
+                    borderColor: idx === 0 ? 'var(--color-primary)' : 'var(--color-border-light)'
+                  }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--color-text-muted)', width: '1.5rem' }}>
+                    {idx + 1}.
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: idx === 0 ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
+                      {combo.scorerName}
+                      <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', margin: '0 0.4rem' }}>+</span>
+                      {combo.assisterName}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.15rem' }}>
+                      {combo.count} linked {combo.count === 1 ? 'goal' : 'goals'} together
+                    </div>
+                  </div>
+                  <div style={{
+                    fontWeight: 800, fontSize: '1.25rem',
+                    color: idx === 0 ? 'var(--color-primary-dark)' : 'var(--color-text-main)',
+                    background: idx === 0 ? 'transparent' : 'var(--color-border-light)',
+                    padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-lg)'
+                  }}>
+                    {combo.count}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Full Player Breakdown Table */}
         <div className="card mt-4" style={{ padding: 0, overflow: 'hidden' }}>
@@ -302,11 +421,13 @@ export default function StatsView({
                       Player {renderSortIndicator('name')}
                     </div>
                   </th>
-                  <th onClick={() => handleSort('position')} style={{ cursor: 'pointer' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      Pos {renderSortIndicator('position')}
-                    </div>
-                  </th>
+                  {!teamInfo.hide_positions && (
+                    <th onClick={() => handleSort('position')} style={{ cursor: 'pointer' }}>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        Pos {renderSortIndicator('position')}
+                      </div>
+                    </th>
+                  )}
                   <th onClick={() => handleSort('appearances')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       Apps {renderSortIndicator('appearances')}
@@ -322,14 +443,14 @@ export default function StatsView({
                       Asts {renderSortIndicator('assists')}
                     </div>
                   </th>
-                  <th onClick={() => handleSort('saves')} style={{ cursor: 'pointer', textAlign: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      Saves {renderSortIndicator('saves')}
-                    </div>
-                  </th>
                   <th onClick={() => handleSort('ga')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       G+A {renderSortIndicator('ga')}
+                    </div>
+                  </th>
+                  <th onClick={() => handleSort('saves')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      Saves {renderSortIndicator('saves')}
                     </div>
                   </th>
                 </tr>
@@ -338,21 +459,23 @@ export default function StatsView({
                 {sortedPlayers.map((p) => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.name}</td>
-                    <td>
-                      <span className="badge-pos">{p.position}</span>
-                    </td>
+                    {!teamInfo.hide_positions && (
+                      <td>
+                        <span className="badge-pos">{p.position}</span>
+                      </td>
+                    )}
                     <td style={{ textAlign: 'center' }}>{p.appearances}</td>
-                    <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 700 : 400, color: p.goals > 0 ? 'var(--color-primary-dark)' : 'inherit' }}>
+                    <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 700 : 400, color: p.goals > 0 ? '#ca5d03' : 'inherit' }}>
                       {p.goals}
                     </td>
                     <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 700 : 400, color: p.assists > 0 ? 'var(--color-secondary-dark)' : 'inherit' }}>
                       {p.assists}
                     </td>
-                    <td style={{ textAlign: 'center', fontWeight: p.saves > 0 ? 700 : 400, color: p.saves > 0 ? '#b45309' : 'inherit' }}>
-                      {p.saves}
-                    </td>
                     <td style={{ textAlign: 'center', fontWeight: 800, color: sortField === 'ga' ? 'var(--color-primary-dark)' : 'inherit' }}>
                       {p.goals + p.assists}
+                    </td>
+                    <td style={{ textAlign: 'center', fontWeight: p.saves > 0 ? 700 : 400, color: p.saves > 0 ? '#909c2a' : 'inherit' }}>
+                      {p.saves}
                     </td>
                   </tr>
                 ))}
@@ -368,6 +491,126 @@ export default function StatsView({
           </div>
         </div>
       </div>
+
+      {/* Expanded Leaderboard Modal */}
+      {expandedLeaderboard && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem'
+          }}
+          onClick={() => setExpandedLeaderboard(null)}
+        >
+          <div 
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '400px',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              position: 'relative',
+              backgroundColor: 'var(--color-bg-body)',
+              margin: 0
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button 
+              onClick={() => setExpandedLeaderboard(null)}
+              style={{
+                position: 'absolute',
+                top: '1.25rem',
+                right: '1.25rem',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--color-text-muted)',
+                padding: '0.25rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+              }}
+              onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--color-border-light)'}
+              onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >
+              <X size={20} />
+            </button>
+            <h3 className="title-md mb-4 flex-row gap-2" style={{ textTransform: 'capitalize', paddingRight: '2rem' }}>
+              {expandedLeaderboard === 'goals' && <><Target size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Goals</span></>}
+              {expandedLeaderboard === 'assists' && <><Award size={20} color="var(--color-secondary-dark)" /> <span style={{ color: 'var(--color-secondary-dark)' }}>Top Assists</span></>}
+              {expandedLeaderboard === 'involvements' && <><Zap size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Goal Involvements</span></>}
+              {expandedLeaderboard === 'saves' && <><Shield size={20} color="#b45309" /> <span style={{ color: '#b45309' }}>Top Saves</span></>}
+              {expandedLeaderboard === 'combinations' && <><Heart size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Combinations</span></>}
+            </h3>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {(() => {
+                if (expandedLeaderboard === 'combinations') {
+                  if (fullCombinations.length === 0) return <div className="empty-sub">No combinations yet</div>;
+                  return fullCombinations.map((combo, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                        padding: '0.75rem 1rem',
+                        borderBottom: '1px solid var(--color-border-light)'
+                      }}
+                    >
+                      <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--color-text-muted)', width: '1.5rem' }}>
+                        {idx + 1}.
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text-main)' }}>
+                          {combo.scorerName}
+                          <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', margin: '0 0.4rem' }}>+</span>
+                          {combo.assisterName}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.15rem' }}>
+                          {combo.count} linked {combo.count === 1 ? 'goal' : 'goals'} together
+                        </div>
+                      </div>
+                      <div style={{
+                        fontWeight: 800, fontSize: '1.25rem',
+                        color: 'var(--color-text-main)',
+                        background: 'var(--color-border-light)',
+                        padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-lg)'
+                      }}>
+                        {combo.count}
+                      </div>
+                    </div>
+                  ));
+                }
+
+                let list = [];
+                let metric = '';
+                let color = '';
+                if (expandedLeaderboard === 'goals') { list = statsSummary.fullScorers.filter(p => p.goals > 0); metric = 'goals'; color = 'goals'; }
+                else if (expandedLeaderboard === 'assists') { list = statsSummary.fullAssists.filter(p => p.assists > 0); metric = 'assists'; color = 'assists'; }
+                else if (expandedLeaderboard === 'involvements') { list = statsSummary.fullInvolvements.filter(p => (p.goals + p.assists) > 0); metric = 'involvements'; }
+                else if (expandedLeaderboard === 'saves') { list = statsSummary.fullSaves.filter(p => p.saves > 0); metric = 'saves'; color = 'saves'; }
+                
+                if (list.length === 0) return <div className="empty-sub">No stats recorded yet</div>;
+                
+                return list.map((p, idx) => (
+                  <div key={p.id} className="leaderboard-row" style={{ padding: '0.75rem', borderBottom: '1px solid var(--color-border-light)', borderRadius: 0, marginBottom: 0 }}>
+                    <span className="rank">{idx + 1}.</span>
+                    <span className="p-name">{p.name}</span>
+                    <span className={`p-score ${color}`} style={metric === 'involvements' ? { color: 'var(--color-primary-dark)', background: 'var(--color-primary-light)' } : {}}>
+                      {metric === 'goals' ? p.goals : metric === 'assists' ? p.assists : metric === 'saves' ? p.saves : (p.goals + p.assists)}
+                    </span>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
