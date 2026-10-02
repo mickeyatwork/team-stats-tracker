@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Play, Flag, EyeOff, Edit2, Trash2, X, Check } from 'lucide-react';
+import { Plus, Play, Trophy, ListOrdered, EyeOff, Edit2, Trash2, X, Check, Eye } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 
@@ -27,6 +27,7 @@ export default function MatchesView({
   // Inline opposition editing state for existing matches
   const [editingOpponentMatchId, setEditingOpponentMatchId] = useState(null);
   const [editingOpponentText, setEditingOpponentText] = useState('');
+  const [matchToDelete, setMatchToDelete] = useState(null);
 
   // Squad selection default select all when card opens
   const handleOpenNewMatch = () => {
@@ -129,10 +130,9 @@ export default function MatchesView({
     setEditingOpponentText('');
   };
 
-  const deleteMatch = async (matchId, e) => {
-    if (e) e.stopPropagation();
-    if (!window.confirm('Are you sure you want to delete this match? This cannot be undone.')) return;
+  const deleteMatch = async (matchId) => {
     setMatches(matches.filter((m) => m.id !== matchId));
+    setMatchToDelete(null);
     await supabase.from('match_stats').delete().eq('match_id', matchId);
     await supabase.from('matches').delete().eq('id', matchId);
   };
@@ -143,6 +143,12 @@ export default function MatchesView({
     await supabase.from('matches').update({ status: 'active' }).eq('id', matchId);
     setActiveMatchId(matchId);
     setCurrentView('match_tracker');
+  };
+
+  const viewMatchDetails = (matchId, e) => {
+    if (e) e.stopPropagation();
+    setActiveMatchId(matchId);
+    setCurrentView('match_report');
   };
 
   return (
@@ -306,7 +312,12 @@ export default function MatchesView({
               {/* Matchday Squad Selection */}
               <div className="input-group">
                 <label className="label">Matchday Squad ({newMatchSquadSelection.length} selected)</label>
-                <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+                <div style={{ 
+                  border: '1px solid var(--color-border)', 
+                  borderRadius: 'var(--radius-lg)', 
+                  overflowY: 'auto',
+                  maxHeight: '300px'
+                }}>
                   {squad.map((player) => {
                     const selected = newMatchSquadSelection.includes(player.id);
                     return (
@@ -347,7 +358,9 @@ export default function MatchesView({
                             {player.name}
                           </span>
                         </div>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{player.position}</span>
+                        {!teamInfo.hide_positions && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{player.position}</span>
+                        )}
                       </div>
                     );
                   })}
@@ -394,7 +407,7 @@ export default function MatchesView({
                   )}
                 </div>
                 <div className="badge badge-blue">
-                  <Flag size={12} />
+                  {match.competition === 'Tournament' ? <Trophy size={12} /> : <ListOrdered size={12} />}
                   {match.competition === 'Tournament' ? match.tournament : match.competition || 'Friendly'}
                 </div>
               </div>
@@ -467,29 +480,82 @@ export default function MatchesView({
               </div>
 
               {/* Actions for matches */}
-              {isFinished && (
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border-light)' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border-light)' }}>
+                {isFinished ? (
+                  <>
+                    <button
+                      onClick={(e) => viewMatchDetails(match.id, e)}
+                      className="btn btn-secondary"
+                      style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem', color: 'var(--color-primary)' }}
+                    >
+                      <Eye size={14} /> View Details
+                    </button>
+                    <button
+                      onClick={(e) => reopenMatch(match.id, e)}
+                      className="btn btn-secondary"
+                      style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    >
+                      <Edit2 size={14} /> Re-open Tracker
+                    </button>
+                  </>
+                ) : (
                   <button
-                    onClick={(e) => reopenMatch(match.id, e)}
-                    className="btn btn-secondary"
-                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveMatchId(match.id);
+                      setCurrentView('match_tracker');
+                    }}
+                    className="btn btn-primary"
+                    style={{ flex: 2, padding: '0.5rem', fontSize: '0.8rem' }}
                   >
-                    <Edit2 size={14} /> Re-open Tracker
+                    <Play size={14} /> Open Tracker
                   </button>
-                  <button
-                    onClick={(e) => deleteMatch(match.id, e)}
-                    className="btn btn-secondary"
-                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem', color: 'var(--color-danger)' }}
-                  >
-                    <Trash2 size={14} /> Delete Match
-                  </button>
-                </div>
-              )}
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMatchToDelete(match.id);
+                  }}
+                  className="btn btn-secondary"
+                  style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem', color: 'var(--color-danger)' }}
+                >
+                  <Trash2 size={14} /> Delete
+                </button>
+              </div>
             </div>
           );
         })}
         {matches.length === 0 && !showNewMatchCard && (
           <div className="empty-state card">No matches recorded yet. Create one above to start tracking!</div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {matchToDelete && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+          }}>
+            <div className="card" style={{ width: '100%', maxWidth: '400px' }}>
+              <div className="flex-between mb-4">
+                <h3 className="title-md" style={{ marginBottom: 0, color: 'var(--color-danger)' }}>Delete Match?</h3>
+                <button onClick={() => setMatchToDelete(null)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+              <p style={{ fontSize: '0.9rem', color: 'var(--color-text-main)', marginBottom: '1.5rem' }}>
+                Are you sure you want to delete this match? This action cannot be undone and all associated stats will be permanently lost.
+              </p>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button onClick={() => deleteMatch(matchToDelete)} className="btn btn-primary" style={{ flex: 1, background: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}>
+                  Yes, Delete
+                </button>
+                <button onClick={() => setMatchToDelete(null)} className="btn btn-secondary" style={{ flex: 1 }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

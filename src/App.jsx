@@ -7,6 +7,7 @@ import MatchTrackerView from './views/MatchTrackerView';
 import SquadView from './views/SquadView';
 import StatsView from './views/StatsView';
 import SettingsView from './views/SettingsView';
+import MatchReportView from './views/MatchReportView';
 
 export default function App() {
   // Auth State
@@ -18,6 +19,7 @@ export default function App() {
   const [allTeams, setAllTeams] = useState([]);
   const [squad, setSquad] = useState([]);
   const [matches, setMatches] = useState([]);
+  const [goalEvents, setGoalEvents] = useState([]);
 
   // Navigation State
   const [currentView, setCurrentView] = useState('matches');
@@ -101,6 +103,8 @@ export default function App() {
 
       if (matchData) {
         const { data: statsData } = await supabase.from('match_stats').select('*');
+        const { data: eventsData } = await supabase.from('goal_events').select('*');
+        setGoalEvents(eventsData || []);
         const matchesWithStats = matchData.map((m) => {
           const matchStatsArray = statsData?.filter((s) => s.match_id === m.id) || [];
           const statsMap = {};
@@ -197,6 +201,7 @@ export default function App() {
         allTeams={allTeams}
         onSelectTeam={handleSelectTeam}
         setCurrentView={setCurrentView}
+        goalEvents={goalEvents}
       />
     );
   }
@@ -207,6 +212,18 @@ export default function App() {
         activeMatch={activeMatch}
         matches={matches}
         setMatches={setMatches}
+        squad={squad}
+        teamInfo={teamInfo}
+        setCurrentView={setCurrentView}
+        setActiveMatchId={setActiveMatchId}
+      />
+    );
+  }
+
+  if (currentView === 'match_report' && activeMatch) {
+    return (
+      <MatchReportView
+        activeMatch={activeMatch}
         squad={squad}
         teamInfo={teamInfo}
         setCurrentView={setCurrentView}

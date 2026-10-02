@@ -5,22 +5,15 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="73ab20da-1bac-4a87-8b2b-1d13db47a786" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/dist/assets/index-DWh9q49g.css" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/dist/favicon.svg" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/dist/icons.svg" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/dist/index.html" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/components/TopNav.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/AuthView.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/MatchTrackerView.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/MatchesView.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/SettingsView.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/SquadView.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/StatsView.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/views/TeamSetupView.jsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/views/MatchReportView.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/App.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/src/index.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/views/MatchTrackerView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/MatchTrackerView.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/views/MatchesView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/MatchesView.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/views/SettingsView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/SettingsView.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/views/SquadView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/SquadView.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/views/StatsView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/StatsView.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -28,8 +21,17 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="KubernetesApiPersistence">{}</component>
+  <component name="KubernetesApiProvider">{
+  &quot;isMigrated&quot;: true
+}</component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
@@ -52,7 +54,7 @@
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;general-UX-improvements&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
     &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
@@ -71,10 +73,23 @@
       <workItem from="1789290056179" duration="1747000" />
       <workItem from="1789368040964" duration="19000" />
       <workItem from="1789743588486" duration="1348000" />
+      <workItem from="1790770245634" duration="1595000" />
+      <workItem from="1790851852701" duration="987000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
 </project>
