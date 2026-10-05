@@ -112,7 +112,8 @@ export default function App() {
             statsMap[s.player_id] = {
               goals: s.goals || 0,
               assists: s.assists || 0,
-              saves: s.saves || 0
+              saves: s.saves || 0,
+              is_goalkeeper: s.is_goalkeeper || false
             };
           });
           return { ...m, stats: statsMap };
