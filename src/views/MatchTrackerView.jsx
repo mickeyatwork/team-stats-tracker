@@ -46,10 +46,11 @@ export default function MatchTrackerView({
 
   // Autosave Player Stats (Goals, Assists, Saves, GK status)
   const savePlayerStatToDb = useDebounceCallback(async (matchId, playerId, goals, assists, saves, is_goalkeeper) => {
-    await supabase.from('match_stats').upsert(
+    const { error } = await supabase.from('match_stats').upsert(
       { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
       { onConflict: 'match_id,player_id' }
     );
+    if (error) console.error('Error saving player stat:', error);
   }, 1000);
 
   const updateMatchStat = (matchId, playerId, stat, delta) => {
