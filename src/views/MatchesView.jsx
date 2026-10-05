@@ -82,16 +82,9 @@ export default function MatchesView({
         saves: 0
       }));
 
-      // Try inserting with saves column (fallback gracefully if DB column isn't created yet)
       const { error: statsErr } = await supabase.from('match_stats').insert(statsToInsert);
-      if (statsErr && statsErr.message.includes('saves')) {
-        const fallbackStats = newMatchSquadSelection.map((pid) => ({
-          match_id: newDbMatch.id,
-          player_id: pid,
-          goals: 0,
-          assists: 0
-        }));
-        await supabase.from('match_stats').insert(fallbackStats);
+      if (statsErr) {
+        console.error('Error inserting match stats:', statsErr);
       }
 
       const matchWithStats = { ...newDbMatch, stats: initialStats };

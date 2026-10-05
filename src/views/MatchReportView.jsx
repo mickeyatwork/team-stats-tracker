@@ -42,7 +42,8 @@ export default function MatchReportView({
             position: pInfo ? pInfo.position : '',
             goals: activeMatch.stats[pid]?.goals || 0,
             assists: activeMatch.stats[pid]?.assists || 0,
-            saves: activeMatch.stats[pid]?.saves || 0
+            saves: activeMatch.stats[pid]?.saves || 0,
+            is_goalkeeper: activeMatch.stats[pid]?.is_goalkeeper || false
           };
         })
         .sort((a, b) => {
@@ -183,7 +184,22 @@ export default function MatchReportView({
                 <tbody>
                   {playersInMatch.map(p => (
                     <tr key={p.id}>
-                      <td style={{ fontWeight: 600 }}>{p.name}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        {p.name}
+                        {p.is_goalkeeper && (
+                          <span style={{
+                            marginLeft: '0.4rem',
+                            fontSize: '0.6rem',
+                            padding: '0.1rem 0.25rem',
+                            borderRadius: 'var(--radius-sm)',
+                            backgroundColor: '#b45309',
+                            color: '#ffffff',
+                            verticalAlign: 'middle'
+                          }}>
+                            GK
+                          </span>
+                        )}
+                      </td>
                       {!teamInfo.hide_positions && <td><span className="badge-pos">{p.position}</span></td>}
                       <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 600 : 400 }}>{p.goals}</td>
                       <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 600 : 400 }}>{p.assists}</td>
