@@ -48,7 +48,8 @@ export default function StatsView({
         appearances: 0,
         goals: 0,
         assists: 0,
-        saves: 0
+        saves: 0,
+        cleanSheets: 0
       };
     });
 
@@ -75,7 +76,8 @@ export default function StatsView({
               appearances: 0,
               goals: 0,
               assists: 0,
-              saves: 0
+              saves: 0,
+              cleanSheets: 0
             };
           }
           const pStat = m.stats[pid];
@@ -83,6 +85,10 @@ export default function StatsView({
           playerAgg[pid].goals += pStat.goals || 0;
           playerAgg[pid].assists += pStat.assists || 0;
           playerAgg[pid].saves += pStat.saves || 0;
+          
+          if (pStat.is_goalkeeper && m.opponent_goals === 0 && !m.hide_score) {
+            playerAgg[pid].cleanSheets += 1;
+          }
         });
       }
     });
@@ -97,6 +103,9 @@ export default function StatsView({
     
     const fullSaves = [...playerList].sort((a, b) => b.saves - a.saves || b.appearances - a.appearances);
     const topSaves = fullSaves.slice(0, 3);
+    
+    const fullCleanSheets = [...playerList].sort((a, b) => b.cleanSheets - a.cleanSheets || b.appearances - a.appearances);
+    const topCleanSheets = fullCleanSheets.slice(0, 3);
     
     const fullInvolvements = [...playerList].sort((a, b) => (b.goals + b.assists) - (a.goals + a.assists) || b.appearances - a.appearances);
     const topInvolvements = fullInvolvements.slice(0, 3);
@@ -117,10 +126,12 @@ export default function StatsView({
       topScorers,
       topAssists,
       topSaves,
+      topCleanSheets,
       topInvolvements,
       fullScorers,
       fullAssists,
       fullSaves,
+      fullCleanSheets,
       fullInvolvements
     };
   }, [matches, squad]);
@@ -179,6 +190,10 @@ export default function StatsView({
         case 'saves':
           valA = a.saves;
           valB = b.saves;
+          break;
+        case 'cleanSheets':
+          valA = a.cleanSheets;
+          valB = b.cleanSheets;
           break;
         case 'ga':
         default:
@@ -348,6 +363,27 @@ export default function StatsView({
                   ))
               )}
             </div>
+
+            {/* Top Clean Sheets */}
+            <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('cleanSheets')} style={{ cursor: 'pointer', position: 'relative' }}>
+              <div className="leaderboard-box-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#10b981' }}>
+                <span><Shield size={16} /> Top Clean Sheets</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
+              </div>
+              {statsSummary.topCleanSheets.filter((p) => p.cleanSheets > 0).length === 0 ? (
+                <div className="empty-sub">No clean sheets recorded yet</div>
+              ) : (
+                statsSummary.topCleanSheets
+                  .filter((p) => p.cleanSheets > 0)
+                  .map((p, idx) => (
+                    <div key={p.id} className="leaderboard-row">
+                      <span className="rank">{idx + 1}.</span>
+                      <span className="p-name">{p.name}</span>
+                      <span className="p-score" style={{ color: '#059669', background: '#d1fae5' }}>{p.cleanSheets}</span>
+                    </div>
+                  ))
+              )}
+            </div>
           </div>
         </div>
 
@@ -453,6 +489,11 @@ export default function StatsView({
                       Saves {renderSortIndicator('saves')}
                     </div>
                   </th>
+                  <th onClick={() => handleSort('cleanSheets')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap' }}>
+                      CS {renderSortIndicator('cleanSheets')}
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -477,11 +518,14 @@ export default function StatsView({
                     <td style={{ textAlign: 'center', fontWeight: p.saves > 0 ? 700 : 400, color: p.saves > 0 ? '#909c2a' : 'inherit' }}>
                       {p.saves}
                     </td>
+                    <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? '#10b981' : 'inherit' }}>
+                      {p.cleanSheets}
+                    </td>
                   </tr>
                 ))}
                 {sortedPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+                    <td colSpan={8} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
                       No squad stats available yet.
                     </td>
                   </tr>
@@ -546,6 +590,7 @@ export default function StatsView({
               {expandedLeaderboard === 'assists' && <><Award size={20} color="var(--color-secondary-dark)" /> <span style={{ color: 'var(--color-secondary-dark)' }}>Top Assists</span></>}
               {expandedLeaderboard === 'involvements' && <><Zap size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Goal Involvements</span></>}
               {expandedLeaderboard === 'saves' && <><Shield size={20} color="#b45309" /> <span style={{ color: '#b45309' }}>Top Saves</span></>}
+              {expandedLeaderboard === 'cleanSheets' && <><Shield size={20} color="#10b981" /> <span style={{ color: '#10b981' }}>Top Clean Sheets</span></>}
               {expandedLeaderboard === 'combinations' && <><Heart size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Combinations</span></>}
             </h3>
             
@@ -594,6 +639,7 @@ export default function StatsView({
                 else if (expandedLeaderboard === 'assists') { list = statsSummary.fullAssists.filter(p => p.assists > 0); metric = 'assists'; color = 'assists'; }
                 else if (expandedLeaderboard === 'involvements') { list = statsSummary.fullInvolvements.filter(p => (p.goals + p.assists) > 0); metric = 'involvements'; }
                 else if (expandedLeaderboard === 'saves') { list = statsSummary.fullSaves.filter(p => p.saves > 0); metric = 'saves'; color = 'saves'; }
+                else if (expandedLeaderboard === 'cleanSheets') { list = statsSummary.fullCleanSheets.filter(p => p.cleanSheets > 0); metric = 'cleanSheets'; color = ''; }
                 
                 if (list.length === 0) return <div className="empty-sub">No stats recorded yet</div>;
                 
@@ -601,8 +647,8 @@ export default function StatsView({
                   <div key={p.id} className="leaderboard-row" style={{ padding: '0.75rem', borderBottom: '1px solid var(--color-border-light)', borderRadius: 0, marginBottom: 0 }}>
                     <span className="rank">{idx + 1}.</span>
                     <span className="p-name">{p.name}</span>
-                    <span className={`p-score ${color}`} style={metric === 'involvements' ? { color: 'var(--color-primary-dark)', background: 'var(--color-primary-light)' } : {}}>
-                      {metric === 'goals' ? p.goals : metric === 'assists' ? p.assists : metric === 'saves' ? p.saves : (p.goals + p.assists)}
+                    <span className={`p-score ${color}`} style={metric === 'involvements' ? { color: 'var(--color-primary-dark)', background: 'var(--color-primary-light)' } : metric === 'cleanSheets' ? { color: '#059669', background: '#d1fae5' } : {}}>
+                      {metric === 'goals' ? p.goals : metric === 'assists' ? p.assists : metric === 'saves' ? p.saves : metric === 'cleanSheets' ? p.cleanSheets : (p.goals + p.assists)}
                     </span>
                   </div>
                 ));

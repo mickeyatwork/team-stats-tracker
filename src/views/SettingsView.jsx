@@ -78,16 +78,7 @@ export default function SettingsView({
         .eq('id', teamInfo.id);
 
       if (error) {
-        // Fallback if hide_positions column isn't created yet
-        if (error.message.includes('hide_positions')) {
-          const { error: fallbackError } = await supabase
-            .from('team')
-            .update({ name: teamNameInput, season: seasonInput })
-            .eq('id', teamInfo.id);
-          if (fallbackError) throw fallbackError;
-        } else {
-          throw error;
-        }
+        throw error;
       }
 
       const updated = { ...teamInfo, name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput };
@@ -115,27 +106,7 @@ export default function SettingsView({
     const { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
 
     if (error) {
-      if (error.message.includes('hide_positions')) {
-        const { data: fallbackData, error: fallbackError } = await supabase.from('team').insert([{
-          user_id: session.user.id,
-          name: newTeamName,
-          season: newSeasonName
-        }]).select().single();
-        if (fallbackError) {
-          alert(`Error adding team: ${fallbackError.message}`);
-          setAddTeamLoading(false);
-          return;
-        }
-        if (fallbackData) {
-          setAllTeams([fallbackData, ...allTeams]);
-          setTeamInfo(fallbackData);
-          setShowAddTeamModal(false);
-          setNewTeamName('');
-          setNewSeasonName('');
-        }
-      } else {
-        alert(`Error adding team: ${error.message}`);
-      }
+      alert(`Error adding team: ${error.message}`);
       setAddTeamLoading(false);
       return;
     }
