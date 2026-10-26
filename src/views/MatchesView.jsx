@@ -475,9 +475,20 @@ export default function MatchesView({
                         )}
                         <span className="badge-variant">{match.match_variant || '5-a-side'}</span>
                       </div>
-                      <div className="badge badge-blue">
-                        <ListOrdered size={12} />
-                        {match.competition || 'Friendly'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <div className="badge badge-blue">
+                          <ListOrdered size={12} />
+                          {match.competition || 'Friendly'}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => confirmDeleteMatch(match, e)}
+                          className="btn-delete-match"
+                          title="Delete Match"
+                          aria-label="Delete Match"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </div>
                     </div>
 
@@ -539,7 +550,6 @@ export default function MatchesView({
                       )}
                     </div>
 
-                    {/* Action buttons: View Details, Re-open Tracker / Open Tracker, Delete */}
                     {/* Action buttons: View Details & Re-open Tracker for finished matches, Open Tracker for active matches */}
                     <div
                       style={{
@@ -547,20 +557,20 @@ export default function MatchesView({
                         gap: '0.5rem',
                         marginTop: '1rem',
                         paddingTop: '0.75rem',
-                        borderTop: '1px solid var(--color-border-light)',
-                        flexWrap: 'wrap'
+                        borderTop: '1px solid var(--color-border-light)'
                       }}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {isFinished ? (
                         <>
                           <button
+                            type="button"
                             onClick={(e) => viewMatchDetails(match.id, e)}
                             className="btn btn-secondary"
                             style={{
-                              flex: '1 1 calc(33.333% - 0.5rem)',
+                              flex: 1,
                               minWidth: '100px',
-                              padding: '0.5rem 0.4rem',
+                              padding: '0.5rem 0.6rem',
                               fontSize: '0.8rem',
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -572,12 +582,13 @@ export default function MatchesView({
                             <Eye size={14} /> View Details
                           </button>
                           <button
+                            type="button"
                             onClick={(e) => resumeMatch(match.id, e)}
                             className="btn btn-secondary"
                             style={{
-                              flex: '1 1 calc(33.333% - 0.5rem)',
+                              flex: 1,
                               minWidth: '110px',
-                              padding: '0.5rem 0.4rem',
+                              padding: '0.5rem 0.6rem',
                               fontSize: '0.8rem',
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -591,6 +602,7 @@ export default function MatchesView({
                         </>
                       ) : (
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveMatchId(match.id);
@@ -598,8 +610,8 @@ export default function MatchesView({
                           }}
                           className="btn btn-primary"
                           style={{
-                            flex: 2,
-                            minWidth: '130px',
+                            flex: 1,
+                            width: '100%',
                             padding: '0.5rem 0.6rem',
                             fontSize: '0.825rem',
                             display: 'inline-flex',
@@ -612,25 +624,6 @@ export default function MatchesView({
                           <Play size={14} /> Open Tracker
                         </button>
                       )}
-
-                      <button
-                        onClick={(e) => confirmDeleteMatch(match, e)}
-                        className="btn btn-secondary"
-                        style={{
-                          flex: isFinished ? '1 1 calc(33.333% - 0.5rem)' : '1',
-                          minWidth: '80px',
-                          padding: '0.5rem 0.4rem',
-                          fontSize: '0.8rem',
-                          color: 'var(--color-danger)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '0.35rem',
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        <Trash2 size={14} /> Delete
-                      </button>
                     </div>
                   </div>
                 );
