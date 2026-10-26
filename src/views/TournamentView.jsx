@@ -428,15 +428,29 @@ export default function TournamentView({
                         </div>
                       </div>
 
-                      {!m.hide_score ? (
-                        <div className="match-score" style={{ padding: '0.25rem 0.6rem', fontSize: '0.95rem' }}>
-                          <span className={scoreClass}>{m.team_goals}</span>
-                          <span style={{ color: 'var(--color-text-muted)', margin: '0 0.25rem' }}>-</span>
-                          <span className={isLoss ? 'score-win' : isWin ? 'score-loss' : 'score-draw'}>{m.opponent_goals}</span>
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Score Hidden</span>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        {!m.hide_score ? (
+                          <div className="match-score" style={{ padding: '0.25rem 0.6rem', fontSize: '0.95rem' }}>
+                            <span className={scoreClass}>{m.team_goals}</span>
+                            <span style={{ color: 'var(--color-text-muted)', margin: '0 0.25rem' }}>-</span>
+                            <span className={isLoss ? 'score-win' : isWin ? 'score-loss' : 'score-draw'}>{m.opponent_goals}</span>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Score Hidden</span>
+                        )}
+
+                        {!isFinished && (
+                          <button
+                            type="button"
+                            onClick={(e) => confirmDeleteMatch(m, e)}
+                            className="btn-delete-match"
+                            title="Delete Match"
+                            aria-label="Delete Match"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Action buttons: When finished, only show View Details */}
@@ -476,13 +490,14 @@ export default function TournamentView({
                           {m.status === 'finished' ? (
                             <>
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openMatch(m.id, 'match_report');
                                 }}
                                 className="btn btn-secondary"
                                 style={{
-                                  flex: '1 1 auto',
+                                  flex: 1,
                                   padding: '0.45rem 0.5rem',
                                   fontSize: '0.78rem',
                                   display: 'inline-flex',
@@ -495,10 +510,11 @@ export default function TournamentView({
                                 <Eye size={13} /> View Details
                               </button>
                               <button
+                                type="button"
                                 onClick={(e) => resumeMatch(m.id, e)}
                                 className="btn btn-secondary"
                                 style={{
-                                  flex: '1 1 auto',
+                                  flex: 1,
                                   padding: '0.45rem 0.5rem',
                                   fontSize: '0.78rem',
                                   display: 'inline-flex',
@@ -513,13 +529,15 @@ export default function TournamentView({
                             </>
                           ) : (
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openMatch(m.id, 'match_tracker');
                               }}
                               className="btn btn-primary"
                               style={{
-                                flex: 2,
+                                flex: 1,
+                                width: '100%',
                                 padding: '0.45rem 0.6rem',
                                 fontSize: '0.8rem',
                                 display: 'inline-flex',
@@ -532,24 +550,6 @@ export default function TournamentView({
                               <Play size={13} /> Open Tracker
                             </button>
                           )}
-
-                          <button
-                            onClick={(e) => confirmDeleteMatch(m, e)}
-                            className="btn btn-secondary"
-                            style={{
-                              flex: m.status === 'finished' ? '0 0 auto' : '1',
-                              padding: '0.45rem 0.6rem',
-                              fontSize: '0.78rem',
-                              color: 'var(--color-danger)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '0.3rem',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            <Trash2 size={13} /> Delete
-                          </button>
                         </>
                       )}
                     </div>
@@ -622,15 +622,29 @@ export default function TournamentView({
                         </div>
                       </div>
 
-                      {!m.hide_score ? (
-                        <div className="match-score" style={{ padding: '0.25rem 0.6rem', fontSize: '0.95rem' }}>
-                          <span className={scoreClass}>{m.team_goals}</span>
-                          <span style={{ color: 'var(--color-text-muted)', margin: '0 0.25rem' }}>-</span>
-                          <span className={isLoss ? 'score-win' : isWin ? 'score-loss' : 'score-draw'}>{m.opponent_goals}</span>
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Score Hidden</span>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        {!m.hide_score ? (
+                          <div className="match-score" style={{ padding: '0.25rem 0.6rem', fontSize: '0.95rem' }}>
+                            <span className={scoreClass}>{m.team_goals}</span>
+                            <span style={{ color: 'var(--color-text-muted)', margin: '0 0.25rem' }}>-</span>
+                            <span className={isLoss ? 'score-win' : isWin ? 'score-loss' : 'score-draw'}>{m.opponent_goals}</span>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Score Hidden</span>
+                        )}
+
+                        {!isFinished && (
+                          <button
+                            type="button"
+                            onClick={(e) => confirmDeleteMatch(m, e)}
+                            className="btn-delete-match"
+                            title="Delete Match"
+                            aria-label="Delete Match"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Action buttons: When finished, only show View Details */}
@@ -670,13 +684,14 @@ export default function TournamentView({
                           {m.status === 'finished' ? (
                             <>
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openMatch(m.id, 'match_report');
                                 }}
                                 className="btn btn-secondary"
                                 style={{
-                                  flex: '1 1 auto',
+                                  flex: 1,
                                   padding: '0.45rem 0.5rem',
                                   fontSize: '0.78rem',
                                   display: 'inline-flex',
@@ -689,10 +704,11 @@ export default function TournamentView({
                                 <Eye size={13} /> View Details
                               </button>
                               <button
+                                type="button"
                                 onClick={(e) => resumeMatch(m.id, e)}
                                 className="btn btn-secondary"
                                 style={{
-                                  flex: '1 1 auto',
+                                  flex: 1,
                                   padding: '0.45rem 0.5rem',
                                   fontSize: '0.78rem',
                                   display: 'inline-flex',
@@ -707,13 +723,15 @@ export default function TournamentView({
                             </>
                           ) : (
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openMatch(m.id, 'match_tracker');
                               }}
                               className="btn btn-primary"
                               style={{
-                                flex: 2,
+                                flex: 1,
+                                width: '100%',
                                 padding: '0.45rem 0.6rem',
                                 fontSize: '0.8rem',
                                 display: 'inline-flex',
@@ -726,24 +744,6 @@ export default function TournamentView({
                               <Play size={13} /> Open Tracker
                             </button>
                           )}
-
-                          <button
-                            onClick={(e) => confirmDeleteMatch(m, e)}
-                            className="btn btn-secondary"
-                            style={{
-                              flex: m.status === 'finished' ? '0 0 auto' : '1',
-                              padding: '0.45rem 0.6rem',
-                              fontSize: '0.78rem',
-                              color: 'var(--color-danger)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '0.3rem',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            <Trash2 size={13} /> Delete
-                          </button>
                         </>
                       )}
                     </div>
