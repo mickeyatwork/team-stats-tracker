@@ -217,6 +217,8 @@ export default function App() {
         teamInfo={teamInfo}
         setCurrentView={setCurrentView}
         setActiveMatchId={setActiveMatchId}
+        allGoalEvents={goalEvents}
+        setAllGoalEvents={setGoalEvents}
       />
     );
   }
@@ -225,10 +227,14 @@ export default function App() {
     return (
       <MatchReportView
         activeMatch={activeMatch}
+        matches={matches}
+        setMatches={setMatches}
         squad={squad}
         teamInfo={teamInfo}
         setCurrentView={setCurrentView}
         setActiveMatchId={setActiveMatchId}
+        allGoalEvents={goalEvents}
+        setAllGoalEvents={setGoalEvents}
       />
     );
   }

@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
-import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
+import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -20,7 +21,9 @@ export default function MatchTrackerView({
   squad,
   teamInfo,
   setCurrentView,
-  setActiveMatchId
+  setActiveMatchId,
+  allGoalEvents,
+  setAllGoalEvents
 }) {
   const [editingOpponent, setEditingOpponent] = useState(false);
   const [opponentInput, setOpponentInput] = useState(activeMatch?.opponent || '');
@@ -28,21 +31,49 @@ export default function MatchTrackerView({
   const [assistModalScorer, setAssistModalScorer] = useState(null);
   const [playerToRemove, setPlayerToRemove] = useState(null); // { id, name }
   const [viewMode, setViewMode] = useState(() => {
-    return localStorage.getItem('matchTrackerViewMode') || 'cards';
+    return localStorage.getItem('matchTrackerViewMode') || 'table';
   });
+
+  // Timeline State
+  const [goalEvents, setGoalEvents] = useState([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [showTimeline, setShowTimeline] = useState(true);
+  const [assigningGoalEvent, setAssigningGoalEvent] = useState(null);
+  const [assignStep, setAssignStep] = useState('scorer'); // 'scorer' | 'assister'
+  const [selectedScorerId, setSelectedScorerId] = useState(null);
+  const reorderSaveTimerRef = useRef(null);
 
   const handleSetViewMode = (mode) => {
     setViewMode(mode);
     localStorage.setItem('matchTrackerViewMode', mode);
   };
 
+  // Fetch goal events for active match
+  const fetchGoalEvents = async () => {
+    setLoadingEvents(true);
+    const { data, error } = await supabase
+      .from('goal_events')
+      .select('*')
+      .eq('match_id', activeMatch.id)
+      .order('created_at', { ascending: true });
+    if (!error && data) {
+      setGoalEvents(data);
+    }
+    setLoadingEvents(false);
+  };
+
+  useEffect(() => {
+    if (activeMatch?.id) {
+      fetchGoalEvents();
+    }
+  }, [activeMatch?.id]);
 
   // Autosave Match Score
   const saveMatchScoreToDb = useDebounceCallback(async (matchId, teamGoals, oppGoals) => {
     await supabase.from('matches').update({ team_goals: teamGoals, opponent_goals: oppGoals }).eq('id', matchId);
   }, 1000);
 
-  const updateMatchScore = (matchId, team, delta) => {
+  const updateMatchScore = async (matchId, team, delta) => {
     const m = matches.find((x) => x.id === matchId);
     if (!m) return;
     const newVal = Math.max(0, m[team] + delta);
@@ -50,6 +81,30 @@ export default function MatchTrackerView({
     const tGoals = team === 'team_goals' ? newVal : m.team_goals;
     const oGoals = team === 'opponent_goals' ? newVal : m.opponent_goals;
     saveMatchScoreToDb(matchId, tGoals, oGoals);
+
+    if (delta > 0) {
+      // Adding a goal directly on the scoreboard
+      const isTeam = team === 'team_goals';
+      const newEvent = {
+        match_id: matchId,
+        scorer_id: isTeam ? 'UNASSIGNED' : 'OPPONENT',
+        assister_id: null,
+        created_at: new Date().toISOString()
+      };
+      const { data, error } = await supabase.from('goal_events').insert([newEvent]).select().single();
+      if (!error && data) {
+        setGoalEvents((prev) => [...prev, data]);
+        if (setAllGoalEvents) setAllGoalEvents((prev) => [...prev, data]);
+      }
+    } else if (delta < 0) {
+      // Decrementing from the scoreboard: remove latest goal of this team
+      const isTeam = team === 'team_goals';
+      const matchingEvents = goalEvents.filter((e) => isTeam ? e.scorer_id !== 'OPPONENT' : e.scorer_id === 'OPPONENT');
+      const latest = matchingEvents[matchingEvents.length - 1];
+      if (latest) {
+        await deleteGoalEvent(latest.id, false);
+      }
+    }
   };
 
   // Autosave Player Stats (Goals, Assists, Saves, GK status)
@@ -166,11 +221,17 @@ export default function MatchTrackerView({
     }
 
     // Log the goal event in the database
-    await supabase.from('goal_events').insert([{
+    const { data: newEvt } = await supabase.from('goal_events').insert([{
       match_id: activeMatch.id,
       scorer_id: scorerId,
-      assister_id: assisterId
-    }]);
+      assister_id: assisterId,
+      created_at: new Date().toISOString()
+    }]).select().single();
+
+    if (newEvt) {
+      setGoalEvents((prev) => [...prev, newEvt]);
+      if (setAllGoalEvents) setAllGoalEvents((prev) => [...prev, newEvt]);
+    }
   };
 
   const processGoalDecrement = async (playerId) => {
@@ -226,12 +287,142 @@ export default function MatchTrackerView({
 
     if (eventToDelete) {
       await supabase.from('goal_events').delete().eq('id', eventToDelete.id);
+      setGoalEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
+      if (setAllGoalEvents) setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
       
       if (eventToDelete.assister_id && m.stats[eventToDelete.assister_id]) {
         const aStats = m.stats[eventToDelete.assister_id];
         await upsertSafe(eventToDelete.assister_id, { goals: aStats.goals, assists: Math.max(0, aStats.assists - 1), saves: aStats.saves, is_goalkeeper: aStats.is_goalkeeper });
       }
     }
+  };
+
+  const saveReorderedEventsToDb = (eventsToSave) => {
+    if (reorderSaveTimerRef.current) {
+      clearTimeout(reorderSaveTimerRef.current);
+    }
+    reorderSaveTimerRef.current = setTimeout(async () => {
+      for (let i = 0; i < eventsToSave.length; i++) {
+        await supabase
+          .from('goal_events')
+          .update({ created_at: eventsToSave[i].created_at })
+          .eq('id', eventsToSave[i].id);
+      }
+    }, 350);
+  };
+
+  const handleMoveGoal = (fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    setGoalEvents((prev) => {
+      if (toIndex < 0 || toIndex >= prev.length) return prev;
+      const reordered = reorderTimelineEvents(prev, fromIndex, toIndex, activeMatch.date);
+      if (setAllGoalEvents) {
+        setAllGoalEvents((allPrev) => {
+          const others = allPrev.filter((e) => e.match_id !== activeMatch.id);
+          return [...others, ...reordered];
+        });
+      }
+      saveReorderedEventsToDb(reordered);
+      return reordered;
+    });
+  };
+
+  const deleteGoalEvent = async (eventId, shouldUpdateScore = true) => {
+    const eventToDelete = goalEvents.find((e) => e.id === eventId);
+    if (!eventToDelete) return;
+
+    setGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
+    if (setAllGoalEvents) setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
+
+    await supabase.from('goal_events').delete().eq('id', eventId);
+
+    if (shouldUpdateScore) {
+      const m = matches.find((x) => x.id === activeMatch.id);
+      if (!m) return;
+
+      const isOpponent = eventToDelete.scorer_id === 'OPPONENT';
+      const isUnassigned = eventToDelete.scorer_id === 'UNASSIGNED' || !eventToDelete.scorer_id;
+
+      if (isOpponent) {
+        const newOppGoals = Math.max(0, m.opponent_goals - 1);
+        setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, opponent_goals: newOppGoals } : match)));
+        saveMatchScoreToDb(activeMatch.id, m.team_goals, newOppGoals);
+      } else {
+        const newTeamGoals = Math.max(0, m.team_goals - 1);
+        const newStats = { ...m.stats };
+
+        if (!isUnassigned && newStats[eventToDelete.scorer_id]) {
+          const sStats = newStats[eventToDelete.scorer_id];
+          newStats[eventToDelete.scorer_id] = { ...sStats, goals: Math.max(0, sStats.goals - 1) };
+          await supabase.from('match_stats').upsert(
+            { match_id: activeMatch.id, player_id: eventToDelete.scorer_id, goals: newStats[eventToDelete.scorer_id].goals, assists: sStats.assists, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
+            { onConflict: 'match_id,player_id' }
+          );
+        }
+
+        if (eventToDelete.assister_id && newStats[eventToDelete.assister_id]) {
+          const aStats = newStats[eventToDelete.assister_id];
+          newStats[eventToDelete.assister_id] = { ...aStats, assists: Math.max(0, aStats.assists - 1) };
+          await supabase.from('match_stats').upsert(
+            { match_id: activeMatch.id, player_id: eventToDelete.assister_id, goals: aStats.goals, assists: newStats[eventToDelete.assister_id].assists, saves: aStats.saves || 0, is_goalkeeper: aStats.is_goalkeeper || false },
+            { onConflict: 'match_id,player_id' }
+          );
+        }
+
+        setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats, team_goals: newTeamGoals } : match)));
+        saveMatchScoreToDb(activeMatch.id, newTeamGoals, m.opponent_goals);
+      }
+    }
+  };
+
+  const handleAssignUnassignedGoal = async (assisterId) => {
+    if (!assigningGoalEvent || !selectedScorerId) return;
+    const eventId = assigningGoalEvent.id;
+    const scorerId = selectedScorerId;
+
+    const m = matches.find((x) => x.id === activeMatch.id);
+    if (!m) return;
+
+    const scorerStats = m.stats[scorerId] || { goals: 0, assists: 0, saves: 0 };
+    const assisterStats = assisterId ? (m.stats[assisterId] || { goals: 0, assists: 0, saves: 0 }) : null;
+
+    const newScorerGoals = scorerStats.goals + 1;
+    const newAssisterAssists = assisterStats ? assisterStats.assists + 1 : 0;
+
+    const newStats = { ...m.stats };
+    newStats[scorerId] = { ...scorerStats, goals: newScorerGoals };
+    if (assisterId) {
+      newStats[assisterId] = { ...assisterStats, assists: newAssisterAssists };
+    }
+
+    setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats } : match)));
+
+    // Upsert player stats
+    await supabase.from('match_stats').upsert(
+      { match_id: activeMatch.id, player_id: scorerId, goals: newScorerGoals, assists: scorerStats.assists, saves: scorerStats.saves || 0, is_goalkeeper: scorerStats.is_goalkeeper || false },
+      { onConflict: 'match_id,player_id' }
+    );
+    if (assisterId) {
+      await supabase.from('match_stats').upsert(
+        { match_id: activeMatch.id, player_id: assisterId, goals: assisterStats.goals, assists: newAssisterAssists, saves: assisterStats.saves || 0, is_goalkeeper: assisterStats.is_goalkeeper || false },
+        { onConflict: 'match_id,player_id' }
+      );
+    }
+
+    // Update goal_event row
+    await supabase
+      .from('goal_events')
+      .update({ scorer_id: scorerId, assister_id: assisterId })
+      .eq('id', eventId);
+
+    setGoalEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, scorer_id: scorerId, assister_id: assisterId } : e)));
+    if (setAllGoalEvents) {
+      setAllGoalEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, scorer_id: scorerId, assister_id: assisterId } : e)));
+    }
+
+    setAssigningGoalEvent(null);
+    setSelectedScorerId(null);
+    setAssignStep('scorer');
   };
 
 
@@ -303,6 +494,8 @@ export default function MatchTrackerView({
   const totalGoals = playersInMatch.reduce((sum, p) => sum + p.goals, 0);
   const totalAssists = playersInMatch.reduce((sum, p) => sum + p.assists, 0);
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
+
+  const timeline = computeTimelineWithScores(goalEvents, activeMatch.opponent, squad);
 
   return (
     <div className="app-container">
@@ -399,8 +592,138 @@ export default function MatchTrackerView({
           </div>
         )}
 
+        {/* Goal Order Timeline Card */}
+        <div className="timeline-card">
+          <div className="timeline-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Clock size={16} style={{ color: 'var(--color-primary)' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text-main)' }}>
+                Match Timeline (Goal Order)
+              </span>
+              <span style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                backgroundColor: 'var(--color-border-light)',
+                color: 'var(--color-text-muted)',
+                padding: '0.1rem 0.45rem',
+                borderRadius: 'var(--radius-full)'
+              }}>
+                {timeline.length} {timeline.length === 1 ? 'goal' : 'goals'}
+              </span>
+            </div>
+            {timeline.length > 0 && (
+              <button
+                onClick={() => setShowTimeline(!showTimeline)}
+                className="btn-icon-subtle"
+                style={{ fontSize: '0.75rem', gap: '0.25rem' }}
+                title={showTimeline ? 'Hide Timeline' : 'Show Timeline'}
+              >
+                {showTimeline ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            )}
+          </div>
+
+          {showTimeline && (
+            <div>
+              {timeline.length === 0 ? (
+                <div style={{ padding: '0.85rem 1rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.82rem' }}>
+                  No goals recorded yet. Tap <strong>+</strong> on a player or score to log a goal in the timeline.
+                </div>
+              ) : (
+                <div className="timeline-list">
+                  {timeline.map((goal, idx) => (
+                    <div key={goal.id || idx} className="timeline-item">
+                      <select
+                        className="timeline-order-select"
+                        value={goal.orderNumber}
+                        onChange={(e) => handleMoveGoal(idx, parseInt(e.target.value, 10) - 1)}
+                        title="Change goal order position"
+                      >
+                        {timeline.map((_, i) => (
+                          <option key={i + 1} value={i + 1}>#{i + 1}</option>
+                        ))}
+                      </select>
+                      <span className={`timeline-score ${goal.teamScoreAfter > goal.oppScoreAfter ? 'team-lead' : goal.oppScoreAfter > goal.teamScoreAfter ? 'opp-lead' : ''}`}>
+                        {goal.scoreFormatted}
+                      </span>
+
+                      <div className="timeline-content">
+                        <div className={`timeline-title ${goal.isOpponent ? 'opponent' : goal.isUnassigned ? 'unassigned' : ''}`}>
+                          {goal.isOpponent ? (
+                            <>
+                              <span style={{ color: 'var(--color-danger)' }}>🔴</span>
+                              <span>{goal.scorerName}</span>
+                            </>
+                          ) : goal.isUnassigned ? (
+                            <>
+                              <span>⚽</span>
+                              <span>{goal.scorerName}</span>
+                              <button
+                                onClick={() => {
+                                  setAssigningGoalEvent(goal);
+                                  setSelectedScorerId(null);
+                                  setAssignStep('scorer');
+                                }}
+                                className="btn btn-secondary"
+                                style={{ padding: '0.15rem 0.45rem', fontSize: '0.7rem', marginLeft: '0.25rem' }}
+                              >
+                                <UserPlus size={11} /> Assign Scorer
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span>⚽</span>
+                              <span>{goal.scorerName}</span>
+                            </>
+                          )}
+                        </div>
+
+                        {!goal.isOpponent && !goal.isUnassigned && (
+                          <div className="timeline-subtitle">
+                            {goal.assisterName ? (
+                              <span>Assist: <strong>{goal.assisterName}</strong></span>
+                            ) : (
+                              <span style={{ fontStyle: 'italic', opacity: 0.8 }}>Solo goal (unassisted)</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="timeline-actions">
+                        <button
+                          onClick={() => handleMoveGoal(idx, idx - 1)}
+                          disabled={idx === 0}
+                          className="btn-timeline-arrow"
+                          title="Move goal earlier in timeline"
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleMoveGoal(idx, idx + 1)}
+                          disabled={idx === timeline.length - 1}
+                          className="btn-timeline-arrow"
+                          title="Move goal later in timeline"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        <button
+                          onClick={() => deleteGoalEvent(goal.id, true)}
+                          className="btn-timeline-del"
+                          title="Delete this goal"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Matchday Squad Header */}
-        <div className="flex-between mb-3 mt-5" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div className="flex-between mb-3 mt-4" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span style={{ fontWeight: 700, color: 'var(--color-text-main)', fontSize: '0.95rem' }}>
               Matchday Squad
@@ -847,6 +1170,105 @@ export default function MatchTrackerView({
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Assign Unassigned Goal Modal */}
+        {assigningGoalEvent && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+          }}>
+            <div className="card" style={{ width: '100%', maxWidth: '420px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+              <div className="flex-between mb-3">
+                <h3 className="title-md" style={{ marginBottom: 0 }}>
+                  {assignStep === 'scorer'
+                    ? `Assign Scorer for Goal #${assigningGoalEvent.orderNumber}`
+                    : `Who assisted ${playersInMatch.find(p => p.id === selectedScorerId)?.name}?`
+                  }
+                </h3>
+                <button
+                  onClick={() => {
+                    setAssigningGoalEvent(null);
+                    setSelectedScorerId(null);
+                    setAssignStep('scorer');
+                  }}
+                  className="btn-icon"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                {assignStep === 'scorer' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>
+                      Select which player scored Goal #{assigningGoalEvent.orderNumber}:
+                    </div>
+                    {playersInMatch.map((player) => (
+                      <div
+                        key={player.id}
+                        onClick={() => {
+                          setSelectedScorerId(player.id);
+                          setAssignStep('assister');
+                        }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.75rem',
+                          padding: '0.75rem 1rem', cursor: 'pointer',
+                          border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)',
+                          background: 'var(--color-bg-card)', transition: 'background 0.15s'
+                        }}
+                      >
+                        <div className="avatar" style={{ width: '2rem', height: '2rem', fontSize: '0.875rem' }}>
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-text-main)' }}>
+                          {player.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      onClick={() => handleAssignUnassignedGoal(null)}
+                      style={{
+                        padding: '1rem', textAlign: 'center', fontWeight: 600,
+                        border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)',
+                        cursor: 'pointer', marginBottom: '1rem', background: 'var(--color-bg-body)'
+                      }}
+                    >
+                      Unassisted (Solo Goal)
+                    </div>
+
+                    <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                        Select Assister:
+                      </div>
+                      {playersInMatch.filter((p) => p.id !== selectedScorerId).map((player) => (
+                        <div
+                          key={player.id}
+                          onClick={() => handleAssignUnassignedGoal(player.id)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.75rem',
+                            padding: '0.75rem 1rem', cursor: 'pointer',
+                            border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)',
+                            background: 'var(--color-bg-card)', transition: 'background 0.15s'
+                          }}
+                        >
+                          <div className="avatar" style={{ width: '2rem', height: '2rem', fontSize: '0.875rem' }}>
+                            {player.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-text-main)' }}>
+                            {player.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
