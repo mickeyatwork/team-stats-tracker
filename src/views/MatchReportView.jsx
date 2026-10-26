@@ -90,6 +90,8 @@ export default function MatchReportView({
   const isLoss = activeMatch.team_goals < activeMatch.opponent_goals;
   const resultClass = isWin ? 'score-win' : isLoss ? 'score-loss' : 'score-draw';
 
+  const isFinished = activeMatch.status === 'finished';
+
   const expectedTotalGoals = (activeMatch.team_goals || 0) + (activeMatch.opponent_goals || 0);
   const hasMissingGoals = goalEvents.length < expectedTotalGoals;
 
@@ -111,7 +113,7 @@ export default function MatchReportView({
 
   // Reorder timeline events
   const handleMoveGoal = (fromIndex, toIndex) => {
-    if (fromIndex === toIndex) return;
+    if (isFinished || fromIndex === toIndex) return;
     setGoalEvents((prev) => {
       if (toIndex < 0 || toIndex >= prev.length) return prev;
       const reordered = reorderTimelineEvents(prev, fromIndex, toIndex, activeMatch.date);
@@ -128,6 +130,7 @@ export default function MatchReportView({
 
   // Auto-populate missing timeline events
   const handleAutoPopulateTimeline = async () => {
+    if (isFinished) return;
     setAutoPopulating(true);
     try {
       const missingEvents = generateMissingTimelineEvents(activeMatch, playersInMatch, goalEvents);
@@ -161,6 +164,7 @@ export default function MatchReportView({
 
   // Reset timeline order so Team goals appear first and Opponent goals at end
   const handleResetTimelineOrder = async () => {
+    if (isFinished) return;
     if (!window.confirm('Reset the goal timeline so all Team goals appear first and Opponent goals appear at the end? You can then move them into your desired order.')) {
       return;
     }
@@ -206,6 +210,7 @@ export default function MatchReportView({
 
   // Assign or change assist
   const handleAssignAssist = async (eventId, newAssisterId) => {
+    if (isFinished) return;
     const evt = goalEvents.find((e) => e.id === eventId);
     if (!evt) return;
     const oldAssisterId = evt.assister_id;
@@ -286,7 +291,7 @@ export default function MatchReportView({
 
   // Assign unassigned goal
   const handleAssignScorer = async (assisterId) => {
-    if (!assigningGoalEvent || !selectedScorerId) return;
+    if (isFinished || !assigningGoalEvent || !selectedScorerId) return;
     const eventId = assigningGoalEvent.id;
     const scorerId = selectedScorerId;
 
@@ -350,6 +355,7 @@ export default function MatchReportView({
 
   // Delete goal event
   const handleDeleteGoal = async (eventId) => {
+    if (isFinished) return;
     const evt = goalEvents.find((e) => e.id === eventId);
     if (!evt) return;
 
@@ -421,6 +427,7 @@ export default function MatchReportView({
 
   // Add new goal
   const handleAddGoal = async () => {
+    if (isFinished) return;
     const isOpponent = newGoalType === 'OPPONENT';
     const validTimes = goalEvents
       .map((e) => (e.created_at ? new Date(e.created_at).getTime() : 0))
@@ -584,7 +591,7 @@ export default function MatchReportView({
         </div>
 
         {/* Retrospective Timeline Prompt Banner */}
-        {hasMissingGoals && (
+        {hasMissingGoals && !isFinished && (
           <div className="timeline-prompt-card">
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem' }}>
               <Sparkles size={20} style={{ color: 'var(--color-primary)', flexShrink: 0, marginTop: '2px' }} />
@@ -611,52 +618,53 @@ export default function MatchReportView({
           </div>
         )}
 
-        {/* Goal Order & Match Timeline Section */}
+        {/* Match Timeline Section */}
         <div className="card timeline-card" style={{ marginBottom: '1.5rem' }}>
           <div className="timeline-header">
             <div className="timeline-header-title">
               <Clock size={18} style={{ color: 'var(--color-primary)' }} />
-              <span>Goal Order &amp; Match Timeline</span>
-              <span className="timeline-count-badge">
-                {timelineItems.length} {timelineItems.length === 1 ? 'goal' : 'goals'}
-              </span>
+              <span>Match Timeline</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              {timelineItems.length > 1 && (
+            {!isFinished && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                {timelineItems.length > 1 && (
+                  <button
+                    onClick={handleResetTimelineOrder}
+                    className="btn btn-secondary"
+                    title="Reset order so Team goals appear first and Opponent goals at end"
+                    style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                  >
+                    <RotateCcw size={13} /> Reset Order
+                  </button>
+                )}
                 <button
-                  onClick={handleResetTimelineOrder}
+                  onClick={() => {
+                    setNewGoalType('TEAM');
+                    setNewGoalScorerId(playersInMatch.length > 0 ? playersInMatch[0].id : 'UNASSIGNED');
+                    setNewGoalAssisterId('');
+                    setAddGoalModalOpen(true);
+                  }}
                   className="btn btn-secondary"
-                  title="Reset order so Team goals appear first and Opponent goals at end"
-                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
                 >
-                  <RotateCcw size={13} /> Reset Order
+                  <Plus size={15} /> Add Goal
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  setNewGoalType('TEAM');
-                  setNewGoalScorerId(playersInMatch.length > 0 ? playersInMatch[0].id : 'UNASSIGNED');
-                  setNewGoalAssisterId('');
-                  setAddGoalModalOpen(true);
-                }}
-                className="btn btn-secondary"
-                style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
-              >
-                <Plus size={15} /> Add Goal
-              </button>
-            </div>
+              </div>
+            )}
           </div>
 
-          <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem', marginTop: '-0.25rem' }}>
-            Use the <strong>▲</strong> and <strong>▼</strong> arrows to set the exact chronological order of how the goals were scored. You can also assign assists or link unassigned goals.
-          </p>
+          {!isFinished && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem', marginTop: '-0.25rem' }}>
+              Use the <strong>▲</strong> and <strong>▼</strong> arrows to set the exact chronological order of how the goals were scored. You can also assign assists or link unassigned goals.
+            </p>
+          )}
 
           {loadingEvents ? (
             <div className="empty-state" style={{ padding: '1.5rem 0' }}>Loading match timeline...</div>
           ) : timelineItems.length === 0 ? (
             <div className="empty-state" style={{ padding: '1.5rem 0' }}>
               <p style={{ margin: 0 }}>No goals recorded in the timeline yet.</p>
-              {expectedTotalGoals > 0 && (
+              {expectedTotalGoals > 0 && !isFinished && (
                 <button
                   className="btn btn-primary mt-3"
                   onClick={handleAutoPopulateTimeline}
@@ -677,16 +685,20 @@ export default function MatchReportView({
                 return (
                   <div key={item.id} style={{ display: 'flex', flexDirection: 'column' }}>
                     <div className="timeline-item">
-                      <select
-                        className="timeline-order-select"
-                        value={item.orderNumber}
-                        onChange={(e) => handleMoveGoal(index, parseInt(e.target.value, 10) - 1)}
-                        title="Change goal order position"
-                      >
-                        {timelineItems.map((_, i) => (
-                          <option key={i + 1} value={i + 1}>#{i + 1}</option>
-                        ))}
-                      </select>
+                      {!isFinished ? (
+                        <select
+                          className="timeline-order-select"
+                          value={item.orderNumber}
+                          onChange={(e) => handleMoveGoal(index, parseInt(e.target.value, 10) - 1)}
+                          title="Change goal order position"
+                        >
+                          {timelineItems.map((_, i) => (
+                            <option key={i + 1} value={i + 1}>#{i + 1}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="timeline-order">#{item.orderNumber}</span>
+                      )}
                       <div className="timeline-score">{item.scoreFormatted}</div>
 
                       <div className="timeline-content">
@@ -703,16 +715,18 @@ export default function MatchReportView({
                             <div className="timeline-title unassigned" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                               <HelpCircle size={14} style={{ display: 'inline', verticalAlign: 'middle' }} />
                               <span>Team Goal (Unassigned)</span>
-                              <button
-                                onClick={() => {
-                                  setAssigningGoalEvent(item);
-                                  setSelectedScorerId(playersInMatch.length > 0 ? playersInMatch[0].id : '');
-                                }}
-                                className="btn btn-secondary"
-                                style={{ padding: '0.15rem 0.5rem', fontSize: '0.72rem', height: 'auto' }}
-                              >
-                                Assign Scorer
-                              </button>
+                              {!isFinished && (
+                                <button
+                                  onClick={() => {
+                                    setAssigningGoalEvent(item);
+                                    setSelectedScorerId(playersInMatch.length > 0 ? playersInMatch[0].id : '');
+                                  }}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '0.15rem 0.5rem', fontSize: '0.72rem', height: 'auto' }}
+                                >
+                                  Assign Scorer
+                                </button>
+                              )}
                             </div>
                             <div className="timeline-subtitle">Assign a player who scored this goal</div>
                           </>
@@ -728,24 +742,28 @@ export default function MatchReportView({
                                   <span style={{ color: 'var(--color-primary-dark)', fontWeight: 600 }}>
                                     Assist: {item.assisterName}
                                   </span>
-                                  <button
-                                    onClick={() => setLinkingAssistEventId(isLinkingAssist ? null : item.id)}
-                                    className="btn-icon-subtle"
-                                    title="Change assist"
-                                    style={{ padding: '0.1rem 0.3rem' }}
-                                  >
-                                    <ChevronDown size={13} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleAssignAssist(item.id, null)}
-                                    className="btn-icon-subtle"
-                                    title="Remove assist"
-                                    style={{ padding: '0.1rem 0.3rem' }}
-                                  >
-                                    <X size={13} />
-                                  </button>
+                                  {!isFinished && (
+                                    <>
+                                      <button
+                                        onClick={() => setLinkingAssistEventId(isLinkingAssist ? null : item.id)}
+                                        className="btn-icon-subtle"
+                                        title="Change assist"
+                                        style={{ padding: '0.1rem 0.3rem' }}
+                                      >
+                                        <ChevronDown size={13} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleAssignAssist(item.id, null)}
+                                        className="btn-icon-subtle"
+                                        title="Remove assist"
+                                        style={{ padding: '0.1rem 0.3rem' }}
+                                      >
+                                        <X size={13} />
+                                      </button>
+                                    </>
+                                  )}
                                 </>
-                              ) : (
+                              ) : !isFinished ? (
                                 <button
                                   onClick={() => setLinkingAssistEventId(isLinkingAssist ? null : item.id)}
                                   className="btn btn-secondary"
@@ -753,41 +771,43 @@ export default function MatchReportView({
                                 >
                                   + Link Assist
                                 </button>
-                              )}
+                              ) : null}
                             </div>
                           </>
                         )}
                       </div>
 
-                      <div className="timeline-actions">
-                        <button
-                          className="btn-timeline-arrow"
-                          onClick={() => handleMoveGoal(index, index - 1)}
-                          disabled={isFirst}
-                          title="Move earlier"
-                        >
-                          <ArrowUp size={14} />
-                        </button>
-                        <button
-                          className="btn-timeline-arrow"
-                          onClick={() => handleMoveGoal(index, index + 1)}
-                          disabled={isLast}
-                          title="Move later"
-                        >
-                          <ArrowDown size={14} />
-                        </button>
-                        <button
-                          className="btn-timeline-del"
-                          onClick={() => handleDeleteGoal(item.id)}
-                          title="Delete goal"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                      {!isFinished && (
+                        <div className="timeline-actions">
+                          <button
+                            className="btn-timeline-arrow"
+                            onClick={() => handleMoveGoal(index, index - 1)}
+                            disabled={isFirst}
+                            title="Move earlier"
+                          >
+                            <ArrowUp size={14} />
+                          </button>
+                          <button
+                            className="btn-timeline-arrow"
+                            onClick={() => handleMoveGoal(index, index + 1)}
+                            disabled={isLast}
+                            title="Move later"
+                          >
+                            <ArrowDown size={14} />
+                          </button>
+                          <button
+                            className="btn-timeline-del"
+                            onClick={() => handleDeleteGoal(item.id)}
+                            title="Delete goal"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Inline assister selector dropdown */}
-                    {isLinkingAssist && (
+                    {!isFinished && isLinkingAssist && (
                       <div
                         style={{
                           margin: '0.25rem 0 0.5rem 2.5rem',
