@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { Plus, Play, Trophy, ListOrdered, EyeOff, Edit2, Trash2, X, Check, Eye } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Plus, Play, Trophy, ListOrdered, Edit2, Trash2, X, Check, ChevronRight, Eye } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
+import { groupMatchesByTournament, setTournamentFinishedStatus, saveTournament, removeSavedTournament } from '../utils/tournamentUtils';
+import { getDefaultMatchVariant } from '../utils/variantPreferences';
 
 export default function MatchesView({
   matches,
@@ -13,25 +15,45 @@ export default function MatchesView({
   onAddNewTeam,
   setCurrentView,
   setActiveMatchId,
-  session
+  session,
+  onOpenTournament
 }) {
+  const [activeTab, setActiveTab] = useState('matches'); // 'matches' | 'tournaments'
+
+  // Regular match creation state
   const [showNewMatchCard, setShowNewMatchCard] = useState(false);
   const [newMatchOpponent, setNewMatchOpponent] = useState('');
-  const [newMatchCompType, setNewMatchCompType] = useState('Friendly');
-  const [newMatchVariant, setNewMatchVariant] = useState('5-a-side');
-  const [newMatchTournamentName, setNewMatchTournamentName] = useState('');
+  const [newMatchCompType, setNewMatchCompType] = useState('League');
+  const [newMatchVariant, setNewMatchVariant] = useState(getDefaultMatchVariant);
   const [newMatchDate, setNewMatchDate] = useState(new Date().toISOString().split('T')[0]);
   const [newMatchHideScore, setNewMatchHideScore] = useState(false);
   const [newMatchSquadSelection, setNewMatchSquadSelection] = useState([]);
+
+  // New Tournament creation modal state
+  const [showNewTournamentModal, setShowNewTournamentModal] = useState(false);
+  const [newTourneyName, setNewTourneyName] = useState('');
 
   // Inline opposition editing state for existing matches
   const [editingOpponentMatchId, setEditingOpponentMatchId] = useState(null);
   const [editingOpponentText, setEditingOpponentText] = useState('');
   const [matchToDelete, setMatchToDelete] = useState(null);
+  const [tournamentToDelete, setTournamentToDelete] = useState(null);
+  const [tournamentsVersion, setTournamentsVersion] = useState(0);
+
+  // Grouped Tournaments
+  const tournaments = useMemo(() => {
+    return groupMatchesByTournament(matches);
+  }, [matches, tournamentsVersion]);
+
+  // Regular (Non-tournament) matches
+  const regularMatches = useMemo(() => {
+    return matches.filter((m) => m.competition !== 'Tournament');
+  }, [matches]);
 
   // Squad selection default select all when card opens
   const handleOpenNewMatch = () => {
     setNewMatchSquadSelection(squad.map((p) => p.id));
+    setNewMatchVariant(getDefaultMatchVariant());
     setShowNewMatchCard(true);
   };
 
@@ -55,7 +77,7 @@ export default function MatchesView({
       date: new Date(newMatchDate).toISOString(),
       opponent: newMatchOpponent,
       competition: newMatchCompType,
-      tournament: newMatchCompType === 'Tournament' ? newMatchTournamentName : null,
+      tournament: null,
       match_variant: newMatchVariant,
       team_goals: 0,
       opponent_goals: 0,
@@ -100,6 +122,37 @@ export default function MatchesView({
     }
   };
 
+  const handleCreateTournament = (e) => {
+    e.preventDefault();
+    if (!newTourneyName.trim()) return;
+    const name = newTourneyName.trim();
+    saveTournament(name, { match_variant: getDefaultMatchVariant() });
+    setTournamentsVersion((v) => v + 1);
+    setShowNewTournamentModal(false);
+    setNewTourneyName('');
+    if (onOpenTournament) {
+      onOpenTournament(name);
+    }
+  };
+
+  const executeDeleteTournament = async () => {
+    if (!tournamentToDelete) return;
+    const tourney = tournamentToDelete;
+    setTournamentToDelete(null);
+
+    const matchIds = tourney.matches.map((m) => m.id);
+    setMatches((prev) => prev.filter((m) => !matchIds.includes(m.id)));
+    setTournamentFinishedStatus(tourney.name, false);
+    removeSavedTournament(tourney.name);
+    setTournamentsVersion((v) => v + 1);
+
+    for (const mid of matchIds) {
+      await supabase.from('goal_events').delete().eq('match_id', mid);
+      await supabase.from('match_stats').delete().eq('match_id', mid);
+      await supabase.from('matches').delete().eq('id', mid);
+    }
+  };
+
   const startEditOpponent = (match, e) => {
     if (e) e.stopPropagation();
     setEditingOpponentMatchId(match.id);
@@ -110,27 +163,52 @@ export default function MatchesView({
     if (e) e.stopPropagation();
     if (!editingOpponentText.trim()) return;
 
-    const updatedOpponent = editingOpponentText.trim();
-    setMatches(matches.map((m) => (m.id === matchId ? { ...m, opponent: updatedOpponent } : m)));
+    setMatches(
+      matches.map((m) => (m.id === matchId ? { ...m, opponent: editingOpponentText.trim() } : m))
+    );
+
     setEditingOpponentMatchId(null);
 
-    await supabase.from('matches').update({ opponent: updatedOpponent }).eq('id', matchId);
+    const { error } = await supabase
+      .from('matches')
+      .update({ opponent: editingOpponentText.trim() })
+      .eq('id', matchId);
+
+    if (error) {
+      console.error('Failed to update opponent name:', error);
+    }
   };
 
   const cancelEditOpponent = (e) => {
     if (e) e.stopPropagation();
     setEditingOpponentMatchId(null);
-    setEditingOpponentText('');
   };
 
-  const deleteMatch = async (matchId) => {
+  const confirmDeleteMatch = (match, e) => {
+    if (e) e.stopPropagation();
+    setMatchToDelete(match);
+  };
+
+  const executeDeleteMatch = async () => {
+    if (!matchToDelete) return;
+    const matchId = matchToDelete.id;
+
     setMatches(matches.filter((m) => m.id !== matchId));
     setMatchToDelete(null);
-    await supabase.from('match_stats').delete().eq('match_id', matchId);
-    await supabase.from('matches').delete().eq('id', matchId);
+
+    const { error } = await supabase.from('matches').delete().eq('id', matchId);
+    if (error) {
+      console.error('Match delete error:', error);
+      alert(`Failed to delete match: ${error.message}`);
+    }
   };
 
-  const reopenMatch = async (matchId, e) => {
+  const cancelDeleteMatch = () => {
+    setMatchToDelete(null);
+  };
+
+
+  const resumeMatch = async (matchId, e) => {
     if (e) e.stopPropagation();
     setMatches(matches.map((m) => (m.id === matchId ? { ...m, status: 'active' } : m)));
     await supabase.from('matches').update({ status: 'active' }).eq('id', matchId);
@@ -161,396 +239,628 @@ export default function MatchesView({
       />
 
       <div className="view-container">
-        <div className="flex-between mb-4">
-          <h2 className="title-md" style={{ marginBottom: 0 }}>
-            Matches
-          </h2>
-          {!showNewMatchCard && (
-            <button
-              onClick={handleOpenNewMatch}
-              className="btn btn-primary"
-              style={{ width: 'auto', padding: '0.5rem 1rem', borderRadius: 'var(--radius-lg)' }}
-            >
-              <Plus size={16} /> New Match
-            </button>
-          )}
+        {/* Segmented Top Toggle: Regular Matches vs Tournaments */}
+        <div className="matches-tab-bar">
+          <button
+            className={`btn-matches-tab ${activeTab === 'matches' ? 'active' : ''}`}
+            onClick={() => setActiveTab('matches')}
+          >
+            <ListOrdered size={16} /> Regular Matches ({regularMatches.length})
+          </button>
+          <button
+            className={`btn-matches-tab ${activeTab === 'tournaments' ? 'active' : ''}`}
+            onClick={() => setActiveTab('tournaments')}
+          >
+            <Trophy size={16} /> Tournaments ({tournaments.length})
+          </button>
         </div>
 
-        {showNewMatchCard && (
-          <div className="card">
+        {activeTab === 'matches' ? (
+          <>
             <div className="flex-between mb-4">
-              <h3 className="title-md" style={{ marginBottom: 0 }}>
-                Create Match
-              </h3>
-              <button onClick={() => setShowNewMatchCard(false)} className="btn-icon">
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={createMatch}>
-              <div className="flex-row gap-4 mb-4">
-                <div style={{ flex: 1 }}>
-                  <label className="label">Opponent</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="Opponent Team"
-                    value={newMatchOpponent}
-                    onChange={(e) => setNewMatchOpponent(e.target.value)}
-                    required
-                  />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label className="label">Date</label>
-                  <input
-                    type="date"
-                    className="input"
-                    value={newMatchDate}
-                    onChange={(e) => setNewMatchDate(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="flex-row gap-4 mb-4">
-                <div style={{ flex: 1 }}>
-                  <label className="label">Type</label>
-                  <select
-                    className="input select"
-                    value={newMatchCompType}
-                    onChange={(e) => setNewMatchCompType(e.target.value)}
-                  >
-                    <option>Friendly</option>
-                    <option>League</option>
-                    <option>Cup</option>
-                    <option>Tournament</option>
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label className="label">Format</label>
-                  <select
-                    className="input select"
-                    value={newMatchVariant}
-                    onChange={(e) => setNewMatchVariant(e.target.value)}
-                  >
-                    <option>5-a-side</option>
-                    <option>7-a-side</option>
-                    <option>9-a-side</option>
-                    <option>11-a-side</option>
-                  </select>
-                </div>
-              </div>
-
-              {newMatchCompType === 'Tournament' && (
-                <div className="input-group">
-                  <label className="label">Tournament Name</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="e.g. Summer Cup 2024"
-                    value={newMatchTournamentName}
-                    onChange={(e) => setNewMatchTournamentName(e.target.value)}
-                    required
-                  />
-                </div>
-              )}
-
-              {/* Hide Score Toggle */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justify: 'space-between',
-                  padding: '0.75rem 1rem',
-                  background: 'var(--color-border-light)',
-                  borderRadius: 'var(--radius-lg)',
-                  marginBottom: '1rem'
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Hide Score</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                    Useful for younger age groups
-                  </div>
-                </div>
+              <h2 className="title-md" style={{ marginBottom: 0 }}>
+                Matches
+              </h2>
+              {!showNewMatchCard && (
                 <button
-                  type="button"
-                  onClick={() => setNewMatchHideScore((v) => !v)}
-                  style={{
-                    width: '3rem',
-                    height: '1.75rem',
-                    borderRadius: '999px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s',
-                    background: newMatchHideScore ? 'var(--color-primary)' : 'var(--color-border)',
-                    position: 'relative'
-                  }}
+                  onClick={handleOpenNewMatch}
+                  className="btn btn-primary"
+                  style={{ width: 'auto', padding: '0.5rem 1rem', borderRadius: 'var(--radius-lg)' }}
                 >
+                  <Plus size={16} /> New Match
+                </button>
+              )}
+            </div>
+
+            {showNewMatchCard && (
+              <div className="card mb-4">
+                <div className="flex-between mb-4">
+                  <h3 className="title-md" style={{ marginBottom: 0 }}>
+                    Create Match
+                  </h3>
+                  <button onClick={() => setShowNewMatchCard(false)} className="btn-icon">
+                    <X size={20} />
+                  </button>
+                </div>
+                <form onSubmit={createMatch}>
+                  <div className="flex-row gap-4 mb-4">
+                    <div style={{ flex: 1 }}>
+                      <label className="label">Opponent</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="Opponent Team"
+                        value={newMatchOpponent}
+                        onChange={(e) => setNewMatchOpponent(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="label">Date</label>
+                      <input
+                        type="date"
+                        className="input"
+                        value={newMatchDate}
+                        onChange={(e) => setNewMatchDate(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex-row gap-4 mb-4">
+                    <div style={{ flex: 1 }}>
+                      <label className="label">Competition</label>
+                      <select
+                        className="input select"
+                        value={newMatchCompType}
+                        onChange={(e) => setNewMatchCompType(e.target.value)}
+                      >
+                        <option>League</option>
+                        <option>Friendly</option>
+                        <option>Cup</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="label">Format</label>
+                      <select
+                        className="input select"
+                        value={newMatchVariant}
+                        onChange={(e) => setNewMatchVariant(e.target.value)}
+                      >
+                        <option>5-a-side</option>
+                        <option>7-a-side</option>
+                        <option>9-a-side</option>
+                        <option>11-a-side</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Hide Score Toggle */}
                   <div
                     style={{
-                      position: 'absolute',
-                      top: '0.2rem',
-                      left: newMatchHideScore ? 'calc(100% - 1.35rem)' : '0.2rem',
-                      width: '1.35rem',
-                      height: '1.35rem',
-                      background: 'white',
-                      borderRadius: '50%',
-                      transition: 'left 0.2s',
-                      boxShadow: 'var(--shadow-sm)'
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                      marginBottom: '1.5rem',
+                      padding: '0.75rem',
+                      backgroundColor: 'var(--color-bg-body)',
+                      borderRadius: 'var(--radius-lg)',
+                      border: '1px solid var(--color-border)'
                     }}
-                  />
-                </button>
-              </div>
+                  >
+                    <input
+                      type="checkbox"
+                      id="hideScoreToggle"
+                      checked={newMatchHideScore}
+                      onChange={(e) => setNewMatchHideScore(e.target.checked)}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="hideScoreToggle" style={{ fontSize: '0.875rem', cursor: 'pointer', margin: 0, fontWeight: 500 }}>
+                      Hide Score (Youth / Non-competitive match)
+                    </label>
+                  </div>
 
-              {/* Matchday Squad Selection */}
-              <div className="input-group">
-                <label className="label">Matchday Squad ({newMatchSquadSelection.length} selected)</label>
-                <div style={{ 
-                  border: '1px solid var(--color-border)', 
-                  borderRadius: 'var(--radius-lg)', 
-                  overflowY: 'auto',
-                  maxHeight: '300px'
-                }}>
-                  {squad.map((player) => {
-                    const selected = newMatchSquadSelection.includes(player.id);
-                    return (
-                      <div
-                        key={player.id}
-                        onClick={() => toggleSquadSelection(player.id)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justify: 'space-between',
-                          padding: '0.75rem 1rem',
-                          cursor: 'pointer',
-                          background: selected ? 'var(--color-primary-light)' : 'var(--color-bg-card)',
-                          borderBottom: '1px solid var(--color-border-light)',
-                          transition: 'background 0.15s'
-                        }}
+                  {/* Squad Selection */}
+                  <div className="mb-4">
+                    <div className="flex-between mb-2">
+                      <label className="label" style={{ marginBottom: 0 }}>
+                        Select Match Squad ({newMatchSquadSelection.length} selected)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setNewMatchSquadSelection(
+                            newMatchSquadSelection.length === squad.length ? [] : squad.map((p) => p.id)
+                          )
+                        }
+                        className="btn-icon-subtle"
+                        style={{ fontSize: '0.8rem' }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {newMatchSquadSelection.length === squad.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
+
+                    <div
+                      style={{
+                        maxHeight: '180px',
+                        overflowY: 'auto',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 'var(--radius-lg)',
+                        padding: '0.5rem',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, 1fr)',
+                        gap: '0.5rem'
+                      }}
+                    >
+                      {squad.map((player) => {
+                        const isSelected = newMatchSquadSelection.includes(player.id);
+                        return (
                           <div
-                            className="avatar"
+                            key={player.id}
+                            onClick={() => toggleSquadSelection(player.id)}
                             style={{
-                              background: selected ? 'var(--color-primary)' : 'var(--color-border-light)',
-                              color: selected ? 'white' : 'var(--color-text-muted)',
-                              width: '2rem',
-                              height: '2rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.5rem',
+                              padding: '0.5rem',
+                              borderRadius: 'var(--radius-md)',
+                              backgroundColor: isSelected ? 'var(--color-primary-light)' : 'transparent',
+                              color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-main)',
+                              cursor: 'pointer',
+                              fontWeight: isSelected ? 600 : 400,
                               fontSize: '0.875rem'
                             }}
                           >
-                            {player.name.charAt(0).toUpperCase()}
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {}}
+                              style={{ pointerEvents: 'none' }}
+                            />
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {player.name}
+                            </span>
                           </div>
-                          <span
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={!newMatchOpponent || newMatchSquadSelection.length === 0}
+                  >
+                    Start Tracking
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {regularMatches.length === 0 && !showNewMatchCard && (
+              <div className="empty-state">
+                No matches recorded yet. Click "New Match" to get started!
+              </div>
+            )}
+
+            <div className="flex-col gap-3">
+              {regularMatches.map((match) => {
+                const date = new Date(match.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                const isFinished = match.status === 'finished';
+                const isEditingThisOpponent = editingOpponentMatchId === match.id;
+
+                const isWin = match.team_goals > match.opponent_goals;
+                const isLoss = match.team_goals < match.opponent_goals;
+                const resultClass = isWin ? 'score-win' : isLoss ? 'score-loss' : 'score-draw';
+
+                return (
+                  <div
+                    key={match.id}
+                    className="card match-card"
+                    style={{ cursor: isFinished ? 'default' : 'pointer' }}
+                    onClick={
+                      !isFinished && !isEditingThisOpponent
+                        ? () => {
+                            setActiveMatchId(match.id);
+                            setCurrentView('match_tracker');
+                          }
+                        : undefined
+                    }
+                  >
+                    <div className="match-item-header">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span className="match-date">{date}</span>
+                        {isFinished && (
+                          <span className="badge-ft">Full Time</span>
+                        )}
+                        <span className="badge-variant">{match.match_variant || '5-a-side'}</span>
+                      </div>
+                      <div className="badge badge-blue">
+                        <ListOrdered size={12} />
+                        {match.competition || 'Friendly'}
+                      </div>
+                    </div>
+
+                    <div className="flex-between mt-4">
+                      {isEditingThisOpponent ? (
+                        <div
+                          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span style={{ fontWeight: 600 }}>vs</span>
+                          <input
+                            type="text"
+                            className="input"
+                            value={editingOpponentText}
+                            onChange={(e) => setEditingOpponentText(e.target.value)}
+                            style={{ padding: '0.35rem 0.5rem', fontSize: '0.95rem', flex: 1 }}
+                            autoFocus
+                          />
+                          <button
+                            onClick={(e) => saveEditedOpponent(match.id, e)}
+                            className="btn-icon"
+                            style={{ color: 'var(--color-primary)' }}
+                            title="Save Opposition Name"
+                          >
+                            <Check size={18} />
+                          </button>
+                          <button
+                            onClick={cancelEditOpponent}
+                            className="btn-icon"
+                            style={{ color: 'var(--color-danger)' }}
+                            title="Cancel"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div className="item-title" style={{ fontSize: '1.125rem' }}>
+                            vs {match.opponent}
+                          </div>
+                          <button
+                            onClick={(e) => startEditOpponent(match, e)}
+                            className="btn-icon-subtle"
+                            title="Edit Opposition Name"
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                        </div>
+                      )}
+
+                      {!match.hide_score ? (
+                        <div className="match-score">
+                          <span className={resultClass}>{match.team_goals}</span>
+                          <span style={{ color: 'var(--color-text-muted)' }}>-</span>
+                          <span className={isLoss ? 'score-win' : isWin ? 'score-loss' : 'score-draw'}>{match.opponent_goals}</span>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Score Hidden</span>
+                      )}
+                    </div>
+
+                    {/* Action buttons: View Details, Re-open Tracker / Open Tracker, Delete */}
+                    {/* Action buttons: View Details & Re-open Tracker for finished matches, Open Tracker for active matches */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: '0.5rem',
+                        marginTop: '1rem',
+                        paddingTop: '0.75rem',
+                        borderTop: '1px solid var(--color-border-light)',
+                        flexWrap: 'wrap'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {isFinished ? (
+                        <>
+                          <button
+                            onClick={(e) => viewMatchDetails(match.id, e)}
+                            className="btn btn-secondary"
                             style={{
-                              fontWeight: 600,
-                              fontSize: '0.875rem',
-                              color: selected ? 'var(--color-primary-dark)' : 'var(--color-text-main)'
+                              flex: '1 1 calc(33.333% - 0.5rem)',
+                              minWidth: '100px',
+                              padding: '0.5rem 0.4rem',
+                              fontSize: '0.8rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.35rem',
+                              whiteSpace: 'nowrap'
                             }}
                           >
-                            {player.name}
-                          </span>
-                        </div>
-                        {!teamInfo.hide_positions && (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{player.position}</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {squad.length === 0 && <div className="empty-state">Add players to your squad first.</div>}
-                </div>
-              </div>
+                            <Eye size={14} /> View Details
+                          </button>
+                          <button
+                            onClick={(e) => resumeMatch(match.id, e)}
+                            className="btn btn-secondary"
+                            style={{
+                              flex: '1 1 calc(33.333% - 0.5rem)',
+                              minWidth: '110px',
+                              padding: '0.5rem 0.4rem',
+                              fontSize: '0.8rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.35rem',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            <Edit2 size={14} /> Re-open Tracker
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveMatchId(match.id);
+                            setCurrentView('match_tracker');
+                          }}
+                          className="btn btn-primary"
+                          style={{
+                            flex: 2,
+                            minWidth: '130px',
+                            padding: '0.5rem 0.6rem',
+                            fontSize: '0.825rem',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.35rem',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          <Play size={14} /> Open Tracker
+                        </button>
+                      )}
 
-              <button type="submit" className="btn btn-primary" disabled={newMatchSquadSelection.length === 0}>
-                <Play size={18} /> Start Match Tracker
+                      <button
+                        onClick={(e) => confirmDeleteMatch(match, e)}
+                        className="btn btn-secondary"
+                        style={{
+                          flex: isFinished ? '1 1 calc(33.333% - 0.5rem)' : '1',
+                          minWidth: '80px',
+                          padding: '0.5rem 0.4rem',
+                          fontSize: '0.8rem',
+                          color: 'var(--color-danger)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.35rem',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          /* Tournaments View Tab */
+          <>
+            <div className="flex-between mb-4">
+              <h2 className="title-md" style={{ marginBottom: 0 }}>
+                Tournaments
+              </h2>
+              <button
+                onClick={() => setShowNewTournamentModal(true)}
+                className="btn btn-primary"
+                style={{ width: 'auto', padding: '0.5rem 1rem', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                <Plus size={16} /> New Tournament
               </button>
-              {newMatchSquadSelection.length === 0 && (
-                <p style={{ fontSize: '0.75rem', color: 'var(--color-danger)', marginTop: '0.5rem', textAlign: 'center' }}>
-                  Select at least one player.
+            </div>
+
+            {tournaments.length === 0 ? (
+              <div className="card empty-state" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+                <Trophy size={36} style={{ color: 'var(--color-text-light)', margin: '0 auto 0.75rem' }} />
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.35rem' }}>No Tournaments Yet</h3>
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1.25rem', maxWidth: '380px', margin: '0 auto 1.25rem' }}>
+                  Create a tournament to track group and knockout stage games together with dedicated tournament records.
                 </p>
-              )}
-            </form>
-          </div>
-        )}
-
-        {matches.map((match) => {
-          const date = new Date(match.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-          const isFinished = match.status === 'finished';
-          const isEditingThisOpponent = editingOpponentMatchId === match.id;
-
-          return (
-            <div
-              key={match.id}
-              className="card"
-              style={{ cursor: isFinished ? 'default' : 'pointer' }}
-              onClick={
-                !isFinished && !isEditingThisOpponent
-                  ? () => {
-                      setActiveMatchId(match.id);
-                      setCurrentView('match_tracker');
-                    }
-                  : undefined
-              }
-            >
-              <div className="match-item-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="match-date">{date}</span>
-                  {isFinished && (
-                    <span className="badge-ft">Full Time</span>
-                  )}
-                </div>
-                <div className="badge badge-blue">
-                  {match.competition === 'Tournament' ? <Trophy size={12} /> : <ListOrdered size={12} />}
-                  {match.competition === 'Tournament' ? match.tournament : match.competition || 'Friendly'}
-                </div>
-              </div>
-
-              <div className="flex-between mt-4">
-                {/* Editable Opposition Name */}
-                {isEditingThisOpponent ? (
-                  <div
-                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span style={{ fontWeight: 600 }}>vs</span>
-                    <input
-                      type="text"
-                      className="input"
-                      value={editingOpponentText}
-                      onChange={(e) => setEditingOpponentText(e.target.value)}
-                      style={{ padding: '0.35rem 0.5rem', fontSize: '0.95rem', flex: 1 }}
-                      autoFocus
-                    />
-                    <button
-                      onClick={(e) => saveEditedOpponent(match.id, e)}
-                      className="btn-icon"
-                      style={{ color: 'var(--color-primary)' }}
-                      title="Save Opposition Name"
-                    >
-                      <Check size={18} />
-                    </button>
-                    <button
-                      onClick={cancelEditOpponent}
-                      className="btn-icon"
-                      style={{ color: 'var(--color-danger)' }}
-                      title="Cancel"
-                    >
-                      <X size={18} />
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <div className="item-title" style={{ fontSize: '1.125rem' }}>
-                      vs {match.opponent}
-                    </div>
-                    <button
-                      onClick={(e) => startEditOpponent(match, e)}
-                      className="btn-icon-subtle"
-                      title="Edit Opposition Name"
-                    >
-                      <Edit2 size={14} />
-                    </button>
-                  </div>
-                )}
-
-                {!isEditingThisOpponent && (
-                  match.hide_score ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                      <EyeOff size={14} /> Score hidden
-                    </div>
-                  ) : (
-                    <div className="match-score">
-                      <span className={match.team_goals > match.opponent_goals ? 'score-win' : match.team_goals < match.opponent_goals ? 'score-loss' : 'score-draw'}>
-                        {match.team_goals}
-                      </span>
-                      <span style={{ color: 'var(--color-border)', fontSize: '1rem', fontWeight: 400 }}>-</span>
-                      <span className={match.opponent_goals > match.team_goals ? 'score-win' : match.opponent_goals < match.team_goals ? 'score-loss' : 'score-draw'}>
-                        {match.opponent_goals}
-                      </span>
-                    </div>
-                  )
-                )}
-              </div>
-
-              {/* Actions for matches */}
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border-light)' }}>
-                {isFinished ? (
-                  <>
-                    <button
-                      onClick={(e) => viewMatchDetails(match.id, e)}
-                      className="btn btn-secondary"
-                      style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem', color: 'var(--color-primary)' }}
-                    >
-                      <Eye size={14} /> View Details
-                    </button>
-                    <button
-                      onClick={(e) => reopenMatch(match.id, e)}
-                      className="btn btn-secondary"
-                      style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
-                    >
-                      <Edit2 size={14} /> Re-open Tracker
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveMatchId(match.id);
-                      setCurrentView('match_tracker');
-                    }}
-                    className="btn btn-primary"
-                    style={{ flex: 2, padding: '0.5rem', fontSize: '0.8rem' }}
-                  >
-                    <Play size={14} /> Open Tracker
-                  </button>
-                )}
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMatchToDelete(match.id);
-                  }}
-                  className="btn btn-secondary"
-                  style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem', color: 'var(--color-danger)' }}
+                  onClick={() => setShowNewTournamentModal(true)}
+                  className="btn btn-primary"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
                 >
-                  <Trash2 size={14} /> Delete
+                  <Plus size={16} /> Create First Tournament
                 </button>
               </div>
-            </div>
-          );
-        })}
-        {matches.length === 0 && !showNewMatchCard && (
-          <div className="empty-state card">No matches recorded yet. Create one above to start tracking!</div>
-        )}
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                {tournaments.map((t) => (
+                  <div
+                    key={t.name}
+                    className="card match-card"
+                    onClick={() => onOpenTournament && onOpenTournament(t.name)}
+                    style={{ cursor: 'pointer', padding: '1.15rem 1.25rem' }}
+                  >
+                    <div className="flex-between" style={{ alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <div
+                          style={{
+                            width: '38px',
+                            height: '38px',
+                            borderRadius: 'var(--radius-md)',
+                            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                            color: '#ffffff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}
+                        >
+                          <Trophy size={20} />
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--color-text-main)' }}>
+                              {t.name}
+                            </span>
+                            {t.isFinished && (
+                              <span className="badge-ft" style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
+                                Finished
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                            {new Date(t.latestDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            <span style={{ margin: '0 0.35rem' }}>•</span>
+                            <span className="badge-variant" style={{ fontSize: '0.7rem', padding: '0.1rem 0.35rem' }}>{t.match_variant}</span>
+                          </div>
+                        </div>
+                      </div>
 
-        {/* Delete Confirmation Modal */}
-        {matchToDelete && (
-          <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.5)', zIndex: 1000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
-          }}>
-            <div className="card" style={{ width: '100%', maxWidth: '400px' }}>
-              <div className="flex-between mb-4">
-                <h3 className="title-md" style={{ marginBottom: 0, color: 'var(--color-danger)' }}>Delete Match?</h3>
-                <button onClick={() => setMatchToDelete(null)} className="btn-icon">
-                  <X size={20} />
-                </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTournamentToDelete(t);
+                          }}
+                          className="btn-icon-subtle"
+                          style={{ color: 'var(--color-danger)', padding: '0.25rem' }}
+                          title="Delete tournament and matches"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        <ChevronRight size={18} style={{ color: 'var(--color-text-light)' }} />
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: 'var(--color-bg-body)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '0.5rem 0.75rem',
+                        fontSize: '0.8rem',
+                        border: '1px solid var(--color-border-light)'
+                      }}
+                    >
+                      <span style={{ fontWeight: 700 }}>
+                        {t.summary.played} {t.summary.played === 1 ? 'game' : 'games'}
+                      </span>
+                      <span style={{ color: 'var(--color-text-muted)' }}>
+                        <strong style={{ color: 'var(--color-primary-dark)' }}>{t.summary.wins}W</strong>{' '}
+                        <strong>{t.summary.draws}D</strong>{' '}
+                        <strong style={{ color: 'var(--color-danger)' }}>{t.summary.losses}L</strong>
+                      </span>
+                      <span style={{ color: t.summary.goalDiff > 0 ? 'var(--color-primary-dark)' : t.summary.goalDiff < 0 ? 'var(--color-danger)' : 'var(--color-text-muted)', fontWeight: 700 }}>
+                        GD {t.summary.goalDiff > 0 ? `+${t.summary.goalDiff}` : t.summary.goalDiff}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <p style={{ fontSize: '0.9rem', color: 'var(--color-text-main)', marginBottom: '1.5rem' }}>
-                Are you sure you want to delete this match? This action cannot be undone and all associated stats will be permanently lost.
-              </p>
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button onClick={() => deleteMatch(matchToDelete)} className="btn btn-primary" style={{ flex: 1, background: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}>
-                  Yes, Delete
-                </button>
-                <button onClick={() => setMatchToDelete(null)} className="btn btn-secondary" style={{ flex: 1 }}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </div>
+
+      {/* Modal: New Tournament */}
+      {showNewTournamentModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '420px' }}>
+            <div className="flex-between mb-4">
+              <h3 className="title-md" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Trophy size={18} style={{ color: '#d97706' }} />
+                New Tournament Campaign
+              </h3>
+              <button className="btn-icon" onClick={() => setShowNewTournamentModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTournament}>
+              <div className="form-group mb-4">
+                <label className="label">Tournament Name</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="e.g. Summer Cup 2024, Autumn Trophy"
+                  value={newTourneyName}
+                  onChange={(e) => setNewTourneyName(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowNewTournamentModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!newTourneyName.trim()}
+                >
+                  Open Tournament
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Tournament Deletion */}
+      {tournamentToDelete && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '420px' }}>
+            <h3 className="title-md mb-2">Delete Tournament</h3>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '1.5rem', lineHeight: 1.5 }}>
+              Are you sure you want to delete <strong>{tournamentToDelete.name}</strong>{tournamentToDelete.matches.length > 0 ? ` and all of its ${tournamentToDelete.matches.length} ${tournamentToDelete.matches.length === 1 ? 'match' : 'matches'}` : ''}? All recorded stats for this tournament will be permanently removed.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                onClick={() => setTournamentToDelete(null)}
+                className="btn btn-secondary"
+                style={{ width: 'auto' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeDeleteTournament}
+                className="btn"
+                style={{ width: 'auto', backgroundColor: 'var(--color-danger)', color: '#fff' }}
+              >
+                Delete Tournament
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Match Deletion */}
+      {matchToDelete && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '400px' }}>
+            <h3 className="title-md mb-2">Delete Match</h3>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+              Are you sure you want to delete the match vs <strong>{matchToDelete.opponent}</strong>? All recorded stats for this match will be permanently removed.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button onClick={cancelDeleteMatch} className="btn btn-secondary" style={{ width: 'auto' }}>
+                Cancel
+              </button>
+              <button
+                onClick={executeDeleteMatch}
+                className="btn"
+                style={{ width: 'auto', backgroundColor: 'var(--color-danger)', color: '#fff' }}
+              >
+                Delete Match
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

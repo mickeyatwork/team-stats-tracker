@@ -19,6 +19,47 @@ export default function StatsView({
   // State for expanded leaderboard modal
   const [expandedLeaderboard, setExpandedLeaderboard] = useState(null);
 
+  // Competition & Tournament filtering
+  const [selectedCompetition, setSelectedCompetition] = useState('ALL');
+  const [selectedTournament, setSelectedTournament] = useState('ALL');
+
+  const availableCompetitions = useMemo(() => {
+    const set = new Set();
+    matches.forEach((m) => {
+      if (m.competition) set.add(m.competition);
+    });
+    const order = ['League', 'Cup', 'Tournament', 'Friendly'];
+    const result = order.filter((c) => set.has(c));
+    set.forEach((c) => {
+      if (!result.includes(c)) result.push(c);
+    });
+    return result;
+  }, [matches]);
+
+  const availableTournaments = useMemo(() => {
+    const set = new Set();
+    matches.forEach((m) => {
+      if (m.competition === 'Tournament' && m.tournament) {
+        const parts = m.tournament.split('::');
+        if (parts[0]) set.add(parts[0].trim());
+      }
+    });
+    return Array.from(set);
+  }, [matches]);
+
+  const filteredMatches = useMemo(() => {
+    return matches.filter((m) => {
+      if (selectedCompetition !== 'ALL' && m.competition !== selectedCompetition) {
+        return false;
+      }
+      if (selectedCompetition === 'Tournament' && selectedTournament !== 'ALL') {
+        const parts = (m.tournament || '').split('::');
+        if (parts[0]?.trim() !== selectedTournament) return false;
+      }
+      return true;
+    });
+  }, [matches, selectedCompetition, selectedTournament]);
+
   const handleSort = (field) => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -53,7 +94,7 @@ export default function StatsView({
       };
     });
 
-    matches.forEach((m) => {
+    filteredMatches.forEach((m) => {
       played++;
       goalsFor += m.team_goals || 0;
       goalsAgainst += m.opponent_goals || 0;
@@ -134,24 +175,28 @@ export default function StatsView({
       fullCleanSheets,
       fullInvolvements
     };
-  }, [matches, squad]);
+  }, [filteredMatches, squad]);
 
   const { topCombinations, fullCombinations } = useMemo(() => {
     const combos = {};
-    goalEvents.forEach(e => {
-      if (!e.scorer_id || !e.assister_id) return;
-      const key = [e.scorer_id, e.assister_id].sort().join('__');
-      if (!combos[key]) {
-        combos[key] = { scorer_id: e.scorer_id, assister_id: e.assister_id, count: 0 };
-      }
-      combos[key].count += 1;
-    });
+    const filteredMatchIds = new Set(filteredMatches.map((m) => m.id));
+
+    goalEvents
+      .filter((e) => filteredMatchIds.has(e.match_id))
+      .forEach((e) => {
+        if (!e.scorer_id || !e.assister_id) return;
+        const key = [e.scorer_id, e.assister_id].sort().join('__');
+        if (!combos[key]) {
+          combos[key] = { scorer_id: e.scorer_id, assister_id: e.assister_id, count: 0 };
+        }
+        combos[key].count += 1;
+      });
 
     const full = Object.values(combos)
       .sort((a, b) => b.count - a.count)
-      .map(c => {
-        const scorer = squad.find(p => p.id === c.scorer_id);
-        const assister = squad.find(p => p.id === c.assister_id);
+      .map((c) => {
+        const scorer = squad.find((p) => p.id === c.scorer_id);
+        const assister = squad.find((p) => p.id === c.assister_id);
         return {
           scorerName: scorer ? scorer.name : 'Unknown',
           assisterName: assister ? assister.name : 'Unknown',
@@ -160,7 +205,7 @@ export default function StatsView({
       });
 
     return { fullCombinations: full, topCombinations: full.slice(0, 5) };
-  }, [goalEvents, squad]);
+  }, [goalEvents, filteredMatches, squad]);
 
   // Sort player list dynamically based on sortField and sortDirection
   const sortedPlayers = useMemo(() => {
@@ -234,6 +279,59 @@ export default function StatsView({
       />
 
       <div className="view-container">
+        {/* Competition Filter Bar */}
+        {availableCompetitions.length > 0 && (
+          <div className="competition-filter-bar">
+            <button
+              className={`btn-comp-filter ${selectedCompetition === 'ALL' ? 'active' : ''}`}
+              onClick={() => {
+                setSelectedCompetition('ALL');
+                setSelectedTournament('ALL');
+              }}
+            >
+              All ({matches.length})
+            </button>
+            {availableCompetitions.map((comp) => {
+              const count = matches.filter((m) => m.competition === comp).length;
+              return (
+                <button
+                  key={comp}
+                  className={`btn-comp-filter ${selectedCompetition === comp ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedCompetition(comp);
+                    setSelectedTournament('ALL');
+                  }}
+                >
+                  {comp === 'Tournament' ? 'Tournaments' : comp} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Tournament Sub-filter Pills if Tournament is active and multiple exist */}
+        {selectedCompetition === 'Tournament' && availableTournaments.length > 1 && (
+          <div className="competition-filter-bar" style={{ marginTop: '-0.5rem', marginBottom: '1.25rem' }}>
+            <button
+              className={`btn-comp-filter ${selectedTournament === 'ALL' ? 'active' : ''}`}
+              style={{ fontSize: '0.72rem', padding: '0.2rem 0.65rem' }}
+              onClick={() => setSelectedTournament('ALL')}
+            >
+              All Tournaments
+            </button>
+            {availableTournaments.map((tName) => (
+              <button
+                key={tName}
+                className={`btn-comp-filter ${selectedTournament === tName ? 'active' : ''}`}
+                style={{ fontSize: '0.72rem', padding: '0.2rem 0.65rem' }}
+                onClick={() => setSelectedTournament(tName)}
+              >
+                {tName}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Key Metrics Grid */}
         <div className="stats-grid">
           <div className="stat-card">
