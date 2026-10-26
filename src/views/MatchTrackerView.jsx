@@ -27,6 +27,14 @@ export default function MatchTrackerView({
   const [showAmendSquad, setShowAmendSquad] = useState(false);
   const [assistModalScorer, setAssistModalScorer] = useState(null);
   const [playerToRemove, setPlayerToRemove] = useState(null); // { id, name }
+  const [viewMode, setViewMode] = useState(() => {
+    return localStorage.getItem('matchTrackerViewMode') || 'cards';
+  });
+
+  const handleSetViewMode = (mode) => {
+    setViewMode(mode);
+    localStorage.setItem('matchTrackerViewMode', mode);
+  };
 
 
   // Autosave Match Score
@@ -346,7 +354,7 @@ export default function MatchTrackerView({
                     className="input"
                     value={opponentInput}
                     onChange={(e) => setOpponentInput(e.target.value)}
-                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem', textAlign: 'center' }}
+                    style={{ padding: '0.35rem 0.5rem', fontSize: '1rem', textAlign: 'center', maxWidth: '140px' }}
                     autoFocus
                   />
                   <button onClick={saveEditedOpponent} className="btn-icon" style={{ color: 'var(--color-primary)' }}>
@@ -391,147 +399,299 @@ export default function MatchTrackerView({
           </div>
         )}
 
-        {/* Player Stats List */}
-        <div className="stats-list mt-6">
-          <div className="flex-between mb-2">
-            <span style={{ fontWeight: 600, color: 'var(--color-text-main)' }}>Matchday Squad</span>
+        {/* Matchday Squad Header */}
+        <div className="flex-between mb-3 mt-5" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontWeight: 700, color: 'var(--color-text-main)', fontSize: '0.95rem' }}>
+              Matchday Squad
+            </span>
+            <span style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              backgroundColor: 'var(--color-border-light)',
+              color: 'var(--color-text-muted)',
+              padding: '0.15rem 0.5rem',
+              borderRadius: 'var(--radius-full)',
+              border: '1px solid var(--color-border)'
+            }}>
+              {playersInMatch.length}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {/* View Mode Toggle */}
+            <div className="view-mode-toggle">
+              <button
+                type="button"
+                onClick={() => handleSetViewMode('cards')}
+                className={`btn-mode-toggle ${viewMode === 'cards' ? 'active' : ''}`}
+                title="Card View (Thumb-friendly for live matches)"
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetViewMode('table')}
+                className={`btn-mode-toggle ${viewMode === 'table' ? 'active' : ''}`}
+                title="Compact Table View"
+              >
+                Table
+              </button>
+            </div>
+
             <button 
               onClick={() => setShowAmendSquad(true)} 
               className="btn btn-secondary"
-              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+              style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
             >
               <Users size={14} /> Amend Squad
             </button>
           </div>
-          <div className="stats-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
-              <span style={{ width: '32px', textAlign: 'center', fontSize: '0.65rem', color: 'var(--color-text-light)' }} title="Played in goal">GK?</span>
-              <span>Player</span>
-            </div>
+        </div>
 
-            <div className="stat-cols-3">
-              <div className="stat-col-header goals" title="Goals Scored">
-                <Target size={14} /> Goals
-              </div>
-              <div className="stat-col-header assists" title="Assists">
-                <Award size={14} /> Asts
-              </div>
-              <div className="stat-col-header saves" title="Goalkeeper Saves">
-                <Shield size={14} /> Saves
-              </div>
-            </div>
-          </div>
-
-          <div style={{ 
-            backgroundColor: 'var(--color-bg-card)',
-            borderRadius: 'var(--radius-lg)',
-            border: '1px solid var(--color-border-light)',
-            overflow: 'hidden'
-          }}>
-            {playersInMatch.map((player) => (
-              <div key={player.id} className="stat-row">
-                <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: '0.75rem' }}>
-                  <button
-                    onClick={() => toggleGoalkeeper(activeMatch.id, player.id)}
-                    title="Toggle Goalkeeper Status"
-                    style={{
-                      fontSize: '0.7rem',
-                      padding: '0.2rem 0',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid',
-                      cursor: 'pointer',
-                      fontWeight: player.is_goalkeeper ? 700 : 600,
-                      backgroundColor: player.is_goalkeeper ? '#b45309' : 'transparent',
-                      color: player.is_goalkeeper ? '#ffffff' : 'var(--color-text-muted)',
-                      borderColor: player.is_goalkeeper ? '#b45309' : 'var(--color-border)',
-                      transition: 'all 0.15s',
-                      width: '32px',
-                      textAlign: 'center',
-                      flexShrink: 0
-                    }}
-                  >
-                    GK
-                  </button>
-                  
-                  <div className="stat-player-info" style={{ flex: 1, margin: 0 }}>
-                    <span className="stat-player-name">{player.name}</span>
-                    {!teamInfo.hide_positions && (
-                      <div style={{ marginTop: '0.15rem' }}>
-                        <span className="stat-player-pos">{player.position}</span>
-                      </div>
+        {/* Player Stats List */}
+        <div className="stats-list">
+          {viewMode === 'cards' ? (
+            /* =======================================
+               Card Mode (Thumb-Friendly, No Horizontal Overflow)
+               ======================================= */
+            <div>
+              {playersInMatch.map((player) => (
+                <div key={player.id} className="stat-card-row">
+                  <div className="stat-card-top">
+                    <div className="stat-card-player">
+                      <button
+                        onClick={() => toggleGoalkeeper(activeMatch.id, player.id)}
+                        title="Toggle Goalkeeper Status"
+                        className={`btn-gk-toggle ${player.is_goalkeeper ? 'active' : ''}`}
+                      >
+                        GK
+                      </button>
+                      <span className="stat-card-name">{player.name}</span>
+                    </div>
+                    {!teamInfo.hide_positions && player.position && (
+                      <span className="badge-pos">{player.position}</span>
                     )}
                   </div>
+
+                  <div className="stat-card-grid">
+                    {/* Goals Column */}
+                    <div className="stat-col-cell">
+                      <div className="stat-control-label goals">
+                        <Target size={11} /> Goals
+                      </div>
+                      <div className="stat-card-control">
+                        <button
+                          onClick={() => processGoalDecrement(player.id)}
+                          className="btn-stat"
+                          aria-label={`Decrease goals for ${player.name}`}
+                        >
+                          -
+                        </button>
+                        <span className="stat-value">{player.goals}</span>
+                        <button
+                          onClick={() => handleAddGoalClick(player.id)}
+                          className="btn-stat-plus goals"
+                          aria-label={`Add goal for ${player.name}`}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Assists Column */}
+                    <div className="stat-col-cell">
+                      <div className="stat-control-label assists">
+                        <Award size={11} /> Asts
+                      </div>
+                      <div className="stat-card-control">
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', -1)}
+                          className="btn-stat"
+                          aria-label={`Decrease assists for ${player.name}`}
+                        >
+                          -
+                        </button>
+                        <span className="stat-value">{player.assists}</span>
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', 1)}
+                          className="btn-stat-plus assists"
+                          aria-label={`Add assist for ${player.name}`}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Saves Column */}
+                    <div className="stat-col-cell">
+                      <div className="stat-control-label saves">
+                        <Shield size={11} /> Saves
+                      </div>
+                      <div className="stat-card-control">
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', -1)}
+                          className="btn-stat"
+                          aria-label={`Decrease saves for ${player.name}`}
+                        >
+                          -
+                        </button>
+                        <span className="stat-value">{player.saves}</span>
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', 1)}
+                          className="btn-stat-plus saves"
+                          aria-label={`Add save for ${player.name}`}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Cards Totals Summary */}
+              {playersInMatch.length > 0 && (
+                <div className="stat-cards-totals">
+                  <div className="stat-cards-totals-label">Match Totals</div>
+                  <div className="stat-cards-totals-grid">
+                    <div className="stat-card-total-box goals">
+                      <span className="stat-card-total-num goals">{totalGoals}</span>
+                      <span className="stat-card-total-title">Goals</span>
+                    </div>
+                    <div className="stat-card-total-box assists">
+                      <span className="stat-card-total-num assists">{totalAssists}</span>
+                      <span className="stat-card-total-title">Assists</span>
+                    </div>
+                    <div className="stat-card-total-box saves">
+                      <span className="stat-card-total-num saves">{totalSaves}</span>
+                      <span className="stat-card-total-title">Saves</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* =======================================
+               Table Mode (Compact Single-Row View)
+               ======================================= */
+            <div>
+              <div className="stats-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+                  <span style={{ width: '32px', textAlign: 'center', fontSize: '0.65rem', color: 'var(--color-text-light)' }} title="Played in goal">GK?</span>
+                  <span>Player</span>
                 </div>
 
                 <div className="stat-cols-3">
-                  {/* Goals Counter */}
-                  <div className="stat-control-group">
-                    <button
-                      onClick={() => processGoalDecrement(player.id)}
-                      className="btn-stat"
-                    >
-                      -
-                    </button>
-                    <span className="stat-value">{player.goals}</span>
-                    <button
-                      onClick={() => handleAddGoalClick(player.id)}
-                      className="btn-stat-plus goals"
-                    >
-                      <Plus size={14} />
-                    </button>
+                  <div className="stat-col-header goals" title="Goals Scored">
+                    <Target size={13} /> Goals
                   </div>
-
-                  {/* Assists Counter */}
-                  <div className="stat-control-group">
-                    <button
-                      onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', -1)}
-                      className="btn-stat"
-                    >
-                      -
-                    </button>
-                    <span className="stat-value">{player.assists}</span>
-                    <button
-                      onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', 1)}
-                      className="btn-stat-plus assists"
-                    >
-                      <Plus size={14} />
-                    </button>
+                  <div className="stat-col-header assists" title="Assists">
+                    <Award size={13} /> Asts
                   </div>
-
-                  {/* Saves Counter (Goalkeeper) */}
-                  <div className="stat-control-group">
-                    <button
-                      onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', -1)}
-                      className="btn-stat"
-                    >
-                      -
-                    </button>
-                    <span className="stat-value">{player.saves}</span>
-                    <button
-                      onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', 1)}
-                      className="btn-stat-plus saves"
-                    >
-                      <Plus size={14} />
-                    </button>
+                  <div className="stat-col-header saves" title="Goalkeeper Saves">
+                    <Shield size={13} /> Saves
                   </div>
                 </div>
               </div>
-            ))}
 
-            {/* Totals Footer */}
-            {playersInMatch.length > 0 && (
-              <div className="stat-totals-footer">
-                <span className="stat-totals-label">Totals</span>
-                <div className="stat-cols-3">
-                  <div className="stat-total-cell goals">{totalGoals}</div>
-                  <div className="stat-total-cell assists">{totalAssists}</div>
-                  <div className="stat-total-cell saves">{totalSaves}</div>
+              {playersInMatch.map((player) => (
+                <div key={player.id} className="stat-row">
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: '0.5rem' }}>
+                    <button
+                      onClick={() => toggleGoalkeeper(activeMatch.id, player.id)}
+                      title="Toggle Goalkeeper Status"
+                      className={`btn-gk-toggle ${player.is_goalkeeper ? 'active' : ''}`}
+                    >
+                      GK
+                    </button>
+                    
+                    <div className="stat-player-info" style={{ flex: 1, margin: 0 }}>
+                      <span className="stat-player-name">{player.name}</span>
+                      {!teamInfo.hide_positions && player.position && (
+                        <div style={{ marginTop: '0.1rem' }}>
+                          <span className="stat-player-pos">{player.position}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="stat-cols-3">
+                    {/* Goals Counter */}
+                    <div className="stat-control-group">
+                      <button
+                        onClick={() => processGoalDecrement(player.id)}
+                        className="btn-stat"
+                        aria-label={`Decrease goals for ${player.name}`}
+                      >
+                        -
+                      </button>
+                      <span className="stat-value">{player.goals}</span>
+                      <button
+                        onClick={() => handleAddGoalClick(player.id)}
+                        className="btn-stat-plus goals"
+                        aria-label={`Add goal for ${player.name}`}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+
+                    {/* Assists Counter */}
+                    <div className="stat-control-group">
+                      <button
+                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', -1)}
+                        className="btn-stat"
+                        aria-label={`Decrease assists for ${player.name}`}
+                      >
+                        -
+                      </button>
+                      <span className="stat-value">{player.assists}</span>
+                      <button
+                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', 1)}
+                        className="btn-stat-plus assists"
+                        aria-label={`Add assist for ${player.name}`}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+
+                    {/* Saves Counter (Goalkeeper) */}
+                    <div className="stat-control-group">
+                      <button
+                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', -1)}
+                        className="btn-stat"
+                        aria-label={`Decrease saves for ${player.name}`}
+                      >
+                        -
+                      </button>
+                      <span className="stat-value">{player.saves}</span>
+                      <button
+                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', 1)}
+                        className="btn-stat-plus saves"
+                        aria-label={`Add save for ${player.name}`}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              ))}
 
-            {playersInMatch.length === 0 && <div className="empty-state">No players selected in this match.</div>}
-          </div>
+              {/* Table Totals Footer */}
+              {playersInMatch.length > 0 && (
+                <div className="stat-totals-footer">
+                  <span className="stat-totals-label">Totals</span>
+                  <div className="stat-cols-3">
+                    <div className="stat-total-cell goals">{totalGoals}</div>
+                    <div className="stat-total-cell assists">{totalAssists}</div>
+                    <div className="stat-total-cell saves">{totalSaves}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {playersInMatch.length === 0 && <div className="empty-state">No players selected in this match.</div>}
         </div>
 
         {/* Finish Match Button */}
