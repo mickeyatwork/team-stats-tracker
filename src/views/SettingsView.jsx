@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { LogOut, User, Lock, Mail, Shield, Plus, Check, Edit3 } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
+import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
 
 export default function SettingsView({
   session,
@@ -26,6 +27,7 @@ export default function SettingsView({
   const [teamNameInput, setTeamNameInput] = useState(teamInfo?.name || '');
   const [seasonInput, setSeasonInput] = useState(teamInfo?.season || '');
   const [hidePositionsInput, setHidePositionsInput] = useState(teamInfo?.hide_positions || false);
+  const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
 
   // Add New Team Form Modal state inside settings
@@ -83,9 +85,10 @@ export default function SettingsView({
 
       const updated = { ...teamInfo, name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput };
 
+      setDefaultMatchVariant(defaultVariant);
       setTeamInfo(updated);
       setAllTeams(allTeams.map((t) => (t.id === teamInfo.id ? updated : t)));
-      setTeamStatus({ loading: false, success: 'Team details updated!', error: null });
+      setTeamStatus({ loading: false, success: 'Team details and preferences updated!', error: null });
     } catch (error) {
       setTeamStatus({ loading: false, success: null, error: error.message });
     }
@@ -208,6 +211,27 @@ export default function SettingsView({
                   }}
                 />
               </button>
+            </div>
+
+            <div className="form-group mb-4">
+              <label className="label">Default Match Format</label>
+              <select
+                className="input"
+                value={defaultVariant}
+                onChange={(e) => {
+                  setDefaultVariant(e.target.value);
+                  setDefaultMatchVariant(e.target.value);
+                }}
+              >
+                {MATCH_VARIANTS.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+                New regular matches and tournament games will default to this format.
+              </p>
             </div>
 
             {teamStatus.error && <div className="alert alert-danger">{teamStatus.error}</div>}

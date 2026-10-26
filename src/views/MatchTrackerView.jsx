@@ -3,6 +3,7 @@ import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, User
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
+import { parseTournament } from '../utils/tournamentUtils';
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -23,7 +24,10 @@ export default function MatchTrackerView({
   setCurrentView,
   setActiveMatchId,
   allGoalEvents,
-  setAllGoalEvents
+  setAllGoalEvents,
+  returnToTournament,
+  setReturnToTournament,
+  setActiveTournamentName
 }) {
   const [editingOpponent, setEditingOpponent] = useState(false);
   const [opponentInput, setOpponentInput] = useState(activeMatch?.opponent || '');
@@ -429,7 +433,16 @@ export default function MatchTrackerView({
   const finishMatch = async (matchId) => {
     setMatches((prev) => prev.map((m) => (m.id === matchId ? { ...m, status: 'finished' } : m)));
     await supabase.from('matches').update({ status: 'finished' }).eq('id', matchId);
-    setCurrentView('matches');
+
+    const targetTourney = returnToTournament || (activeMatch?.competition === 'Tournament' && activeMatch?.tournament ? parseTournament(activeMatch.tournament).name : null);
+
+    if (targetTourney) {
+      if (setActiveTournamentName) setActiveTournamentName(targetTourney);
+      if (setReturnToTournament) setReturnToTournament(targetTourney);
+      setCurrentView('tournament');
+    } else {
+      setCurrentView('matches');
+    }
     setActiveMatchId(null);
   };
 
@@ -502,12 +515,22 @@ export default function MatchTrackerView({
       <TopNav
         title={
           activeMatch.competition === 'Tournament'
-            ? activeMatch.tournament
+            ? (() => {
+                const { name, round } = parseTournament(activeMatch.tournament);
+                return round ? `${name} (${round})` : name;
+              })()
             : `${activeMatch.competition || 'Friendly'} Match`
         }
         onBack={() => {
           setActiveMatchId(null);
-          setCurrentView('matches');
+          const targetTourney = returnToTournament || (activeMatch?.competition === 'Tournament' && activeMatch?.tournament ? parseTournament(activeMatch.tournament).name : null);
+          if (targetTourney) {
+            if (setActiveTournamentName) setActiveTournamentName(targetTourney);
+            if (setReturnToTournament) setReturnToTournament(targetTourney);
+            setCurrentView('tournament');
+          } else {
+            setCurrentView('matches');
+          }
         }}
       />
 

@@ -8,6 +8,7 @@ import SquadView from './views/SquadView';
 import StatsView from './views/StatsView';
 import SettingsView from './views/SettingsView';
 import MatchReportView from './views/MatchReportView';
+import TournamentView from './views/TournamentView';
 
 export default function App() {
   // Auth State
@@ -24,6 +25,8 @@ export default function App() {
   // Navigation State
   const [currentView, setCurrentView] = useState('matches');
   const [activeMatchId, setActiveMatchId] = useState(null);
+  const [activeTournamentName, setActiveTournamentName] = useState(null);
+  const [returnToTournament, setReturnToTournament] = useState(null);
 
   const activeMatch = matches.find((m) => m.id === activeMatchId);
 
@@ -207,6 +210,24 @@ export default function App() {
     );
   }
 
+  if (currentView === 'tournament' && (activeTournamentName || returnToTournament)) {
+    const currentTourneyName = activeTournamentName || returnToTournament;
+    return (
+      <TournamentView
+        tournamentName={currentTourneyName}
+        matches={matches}
+        setMatches={setMatches}
+        squad={squad}
+        teamInfo={teamInfo}
+        session={session}
+        setCurrentView={setCurrentView}
+        setActiveMatchId={setActiveMatchId}
+        setReturnToTournament={setReturnToTournament}
+        setActiveTournamentName={setActiveTournamentName}
+      />
+    );
+  }
+
   if (currentView === 'match_tracker' && activeMatch) {
     return (
       <MatchTrackerView
@@ -219,6 +240,9 @@ export default function App() {
         setActiveMatchId={setActiveMatchId}
         allGoalEvents={goalEvents}
         setAllGoalEvents={setGoalEvents}
+        returnToTournament={returnToTournament}
+        setReturnToTournament={setReturnToTournament}
+        setActiveTournamentName={setActiveTournamentName}
       />
     );
   }
@@ -235,6 +259,9 @@ export default function App() {
         setActiveMatchId={setActiveMatchId}
         allGoalEvents={goalEvents}
         setAllGoalEvents={setGoalEvents}
+        returnToTournament={returnToTournament}
+        setReturnToTournament={setReturnToTournament}
+        setActiveTournamentName={setActiveTournamentName}
       />
     );
   }
@@ -250,6 +277,10 @@ export default function App() {
       setCurrentView={setCurrentView}
       setActiveMatchId={setActiveMatchId}
       session={session}
+      onOpenTournament={(name) => {
+        setActiveTournamentName(name);
+        setCurrentView('tournament');
+      }}
     />
   );
 }

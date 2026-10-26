@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw } from 'lucide-react';
+import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2 } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents, generateMissingTimelineEvents } from '../utils/timelineUtils';
+import { parseTournament } from '../utils/tournamentUtils';
 
 export default function MatchReportView({
   activeMatch,
@@ -13,7 +14,10 @@ export default function MatchReportView({
   setCurrentView,
   setActiveMatchId,
   allGoalEvents,
-  setAllGoalEvents
+  setAllGoalEvents,
+  returnToTournament,
+  setReturnToTournament,
+  setActiveTournamentName
 }) {
   const [goalEvents, setGoalEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
@@ -32,6 +36,12 @@ export default function MatchReportView({
   const [newGoalType, setNewGoalType] = useState('TEAM'); // 'TEAM' | 'OPPONENT'
   const [newGoalScorerId, setNewGoalScorerId] = useState('UNASSIGNED');
   const [newGoalAssisterId, setNewGoalAssisterId] = useState('');
+
+  const handleReopenTracker = async () => {
+    setMatches((prev) => prev.map((m) => (m.id === activeMatch.id ? { ...m, status: 'active' } : m)));
+    await supabase.from('matches').update({ status: 'active' }).eq('id', activeMatch.id);
+    setCurrentView('match_tracker');
+  };
 
   useEffect(() => {
     if (!activeMatch) return;
@@ -508,7 +518,14 @@ export default function MatchReportView({
         title="Match Report"
         onBack={() => {
           setActiveMatchId(null);
-          setCurrentView('matches');
+          const targetTourney = returnToTournament || (activeMatch?.competition === 'Tournament' && activeMatch?.tournament ? parseTournament(activeMatch.tournament).name : null);
+          if (targetTourney) {
+            if (setActiveTournamentName) setActiveTournamentName(targetTourney);
+            if (setReturnToTournament) setReturnToTournament(targetTourney);
+            setCurrentView('tournament');
+          } else {
+            setCurrentView('matches');
+          }
         }}
       />
 
@@ -517,7 +534,10 @@ export default function MatchReportView({
         <div className="card" style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
           <div className="badge badge-blue" style={{ display: 'inline-flex', marginBottom: '1rem' }}>
             {activeMatch.competition === 'Tournament'
-              ? activeMatch.tournament
+              ? (() => {
+                  const { name, round } = parseTournament(activeMatch.tournament);
+                  return round ? `${name} (${round})` : name;
+                })()
               : activeMatch.competition || 'Friendly'}
           </div>
 
@@ -543,6 +563,23 @@ export default function MatchReportView({
             {new Date(activeMatch.date).toLocaleDateString('en-GB', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
             })}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+            <button
+              onClick={handleReopenTracker}
+              className="btn btn-secondary"
+              style={{
+                width: 'auto',
+                padding: '0.45rem 1rem',
+                fontSize: '0.825rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem'
+              }}
+            >
+              <Edit2 size={14} /> Re-open Match Tracker
+            </button>
           </div>
         </div>
 
