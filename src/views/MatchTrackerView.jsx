@@ -316,7 +316,7 @@ export default function MatchTrackerView({
   };
 
   const handleMoveGoal = (fromIndex, toIndex) => {
-    if (fromIndex === toIndex) return;
+    if (activeMatch?.status === 'finished' || fromIndex === toIndex) return;
     setGoalEvents((prev) => {
       if (toIndex < 0 || toIndex >= prev.length) return prev;
       const reordered = reorderTimelineEvents(prev, fromIndex, toIndex, activeMatch.date);
@@ -618,21 +618,9 @@ export default function MatchTrackerView({
         {/* Goal Order Timeline Card */}
         <div className="timeline-card">
           <div className="timeline-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div className="timeline-header-title">
               <Clock size={16} style={{ color: 'var(--color-primary)' }} />
-              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text-main)' }}>
-                Match Timeline (Goal Order)
-              </span>
-              <span style={{
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                backgroundColor: 'var(--color-border-light)',
-                color: 'var(--color-text-muted)',
-                padding: '0.1rem 0.45rem',
-                borderRadius: 'var(--radius-full)'
-              }}>
-                {timeline.length} {timeline.length === 1 ? 'goal' : 'goals'}
-              </span>
+              <span>Match Timeline</span>
             </div>
             {timeline.length > 0 && (
               <button
@@ -656,16 +644,20 @@ export default function MatchTrackerView({
                 <div className="timeline-list">
                   {timeline.map((goal, idx) => (
                     <div key={goal.id || idx} className="timeline-item">
-                      <select
-                        className="timeline-order-select"
-                        value={goal.orderNumber}
-                        onChange={(e) => handleMoveGoal(idx, parseInt(e.target.value, 10) - 1)}
-                        title="Change goal order position"
-                      >
-                        {timeline.map((_, i) => (
-                          <option key={i + 1} value={i + 1}>#{i + 1}</option>
-                        ))}
-                      </select>
+                      {activeMatch?.status !== 'finished' ? (
+                        <select
+                          className="timeline-order-select"
+                          value={goal.orderNumber}
+                          onChange={(e) => handleMoveGoal(idx, parseInt(e.target.value, 10) - 1)}
+                          title="Change goal order position"
+                        >
+                          {timeline.map((_, i) => (
+                            <option key={i + 1} value={i + 1}>#{i + 1}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="timeline-order">#{goal.orderNumber}</span>
+                      )}
                       <span className={`timeline-score ${goal.teamScoreAfter > goal.oppScoreAfter ? 'team-lead' : goal.oppScoreAfter > goal.teamScoreAfter ? 'opp-lead' : ''}`}>
                         {goal.scoreFormatted}
                       </span>
@@ -712,31 +704,33 @@ export default function MatchTrackerView({
                         )}
                       </div>
 
-                      <div className="timeline-actions">
-                        <button
-                          onClick={() => handleMoveGoal(idx, idx - 1)}
-                          disabled={idx === 0}
-                          className="btn-timeline-arrow"
-                          title="Move goal earlier in timeline"
-                        >
-                          <ChevronUp size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleMoveGoal(idx, idx + 1)}
-                          disabled={idx === timeline.length - 1}
-                          className="btn-timeline-arrow"
-                          title="Move goal later in timeline"
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-                        <button
-                          onClick={() => deleteGoalEvent(goal.id, true)}
-                          className="btn-timeline-del"
-                          title="Delete this goal"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                      {activeMatch?.status !== 'finished' && (
+                        <div className="timeline-actions">
+                          <button
+                            onClick={() => handleMoveGoal(idx, idx - 1)}
+                            disabled={idx === 0}
+                            className="btn-timeline-arrow"
+                            title="Move goal earlier in timeline"
+                          >
+                            <ChevronUp size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleMoveGoal(idx, idx + 1)}
+                            disabled={idx === timeline.length - 1}
+                            className="btn-timeline-arrow"
+                            title="Move goal later in timeline"
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+                          <button
+                            onClick={() => deleteGoalEvent(goal.id, true)}
+                            className="btn-timeline-del"
+                            title="Delete this goal"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

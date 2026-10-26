@@ -5,12 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="73ab20da-1bac-4a87-8b2b-1d13db47a786" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/dist/assets/index-CUzqp9Me.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/dist/assets/index-CYpBffxr.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dist/assets/index-C0jjsQ-V.js" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/dist/assets/index-DWh9q49g.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/dist/assets/index-DVQbocgJ.js" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/dist/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/dist/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/src/index.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/views/MatchReportView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/MatchReportView.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/views/MatchTrackerView.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/views/MatchTrackerView.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -52,7 +49,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "main",
+    "git-widget-placeholder": "Further-match-timeline-updates",
     "node.js.detected.package.eslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
