@@ -103,6 +103,9 @@ export function saveTournament(tourneyName, extra = {}) {
       name,
       createdAt: extra.createdAt || (existingIndex >= 0 ? current[existingIndex].createdAt : new Date().toISOString()),
       match_variant: extra.match_variant || (existingIndex >= 0 ? current[existingIndex].match_variant : '5-a-side'),
+      available_players: extra.available_players !== undefined
+        ? extra.available_players
+        : (existingIndex >= 0 ? current[existingIndex].available_players : undefined),
       ...extra
     };
     if (existingIndex >= 0) {
@@ -114,6 +117,18 @@ export function saveTournament(tourneyName, extra = {}) {
   } catch (e) {
     console.error('Failed to save tournament', e);
   }
+}
+
+export function getTournamentAvailablePlayers(tourneyName) {
+  if (!tourneyName) return null;
+  const saved = getSavedTournaments();
+  const t = saved.find((x) => x.name.toLowerCase() === tourneyName.toLowerCase());
+  return t && Array.isArray(t.available_players) ? t.available_players : null;
+}
+
+export function setTournamentAvailablePlayers(tourneyName, playerIds) {
+  if (!tourneyName) return;
+  saveTournament(tourneyName, { available_players: playerIds });
 }
 
 export function removeSavedTournament(tourneyName) {
@@ -150,6 +165,7 @@ export function groupMatchesByTournament(matches = []) {
       latestDate: dateStr,
       earliestDate: dateStr,
       match_variant: st.match_variant || '5-a-side',
+      available_players: st.available_players,
       matches: [],
       groupMatches: [],
       knockoutMatches: [],
