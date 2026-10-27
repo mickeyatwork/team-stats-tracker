@@ -3,7 +3,7 @@ import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, User
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
-import { parseTournament } from '../utils/tournamentUtils';
+import { parseTournament, getTournamentAvailablePlayers } from '../utils/tournamentUtils';
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -1055,14 +1055,30 @@ export default function MatchTrackerView({
                   <X size={20} />
                 </button>
               </div>
-              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
                 Add or remove players from this match. Removing a player will delete their stats for this match.
               </p>
-              
-              <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-                {squad.map((player) => {
-                  const selected = activeMatch.stats && activeMatch.stats[player.id] !== undefined;
-                  return (
+
+              {(() => {
+                const tourneyName = activeMatch?.competition === 'Tournament' && activeMatch?.tournament
+                  ? parseTournament(activeMatch.tournament).name
+                  : null;
+                const tourneyAvailableIds = tourneyName ? getTournamentAvailablePlayers(tourneyName) : null;
+                const amendableSquad = tourneyAvailableIds && tourneyAvailableIds.length > 0
+                  ? squad.filter((p) => tourneyAvailableIds.includes(p.id) || (activeMatch?.stats && activeMatch.stats[p.id] !== undefined))
+                  : squad;
+
+                return (
+                  <>
+                    {tourneyName && tourneyAvailableIds && (
+                      <p style={{ fontSize: '0.75rem', color: 'var(--color-primary-dark)', marginBottom: '0.75rem', fontWeight: 600 }}>
+                        Restricted to available tournament squad ({tourneyName})
+                      </p>
+                    )}
+                    <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+                      {amendableSquad.map((player) => {
+                        const selected = activeMatch.stats && activeMatch.stats[player.id] !== undefined;
+                        return (
                     <div
                       key={player.id}
                       onClick={() => togglePlayerInMatch(player.id)}
@@ -1093,10 +1109,13 @@ export default function MatchTrackerView({
                         <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{player.position}</span>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-              <button onClick={() => setShowAmendSquad(false)} className="btn btn-primary mt-4">
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+            <button onClick={() => setShowAmendSquad(false)} className="btn btn-primary mt-4">
                 Done
               </button>
             </div>

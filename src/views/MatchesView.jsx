@@ -4,6 +4,7 @@ import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { groupMatchesByTournament, setTournamentFinishedStatus, saveTournament, removeSavedTournament } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
+import { getDefaultSquadSelection, isPlayerDefaultOff } from '../utils/playerPreferences';
 
 export default function MatchesView({
   matches,
@@ -32,6 +33,7 @@ export default function MatchesView({
   // New Tournament creation modal state
   const [showNewTournamentModal, setShowNewTournamentModal] = useState(false);
   const [newTourneyName, setNewTourneyName] = useState('');
+  const [newTourneySquadSelection, setNewTourneySquadSelection] = useState([]);
 
   // Inline opposition editing state for existing matches
   const [editingOpponentMatchId, setEditingOpponentMatchId] = useState(null);
@@ -50,9 +52,9 @@ export default function MatchesView({
     return matches.filter((m) => m.competition !== 'Tournament');
   }, [matches]);
 
-  // Squad selection default select all when card opens
+  // Squad selection default select all active players when card opens
   const handleOpenNewMatch = () => {
-    setNewMatchSquadSelection(squad.map((p) => p.id));
+    setNewMatchSquadSelection(getDefaultSquadSelection(squad));
     setNewMatchVariant(getDefaultMatchVariant());
     setShowNewMatchCard(true);
   };
@@ -122,11 +124,20 @@ export default function MatchesView({
     }
   };
 
+  const handleOpenNewTournament = () => {
+    setNewTourneyName('');
+    setNewTourneySquadSelection(getDefaultSquadSelection(squad));
+    setShowNewTournamentModal(true);
+  };
+
   const handleCreateTournament = (e) => {
     e.preventDefault();
-    if (!newTourneyName.trim()) return;
+    if (!newTourneyName.trim() || newTourneySquadSelection.length === 0) return;
     const name = newTourneyName.trim();
-    saveTournament(name, { match_variant: getDefaultMatchVariant() });
+    saveTournament(name, {
+      match_variant: getDefaultMatchVariant(),
+      available_players: newTourneySquadSelection
+    });
     setTournamentsVersion((v) => v + 1);
     setShowNewTournamentModal(false);
     setNewTourneyName('');
@@ -394,6 +405,7 @@ export default function MatchesView({
                     >
                       {squad.map((player) => {
                         const isSelected = newMatchSquadSelection.includes(player.id);
+                        const isOff = isPlayerDefaultOff(player.id);
                         return (
                           <div
                             key={player.id}
@@ -417,9 +429,12 @@ export default function MatchesView({
                               onChange={() => {}}
                               style={{ pointerEvents: 'none' }}
                             />
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                               {player.name}
                             </span>
+                            {isOff && (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>Off</span>
+                            )}
                           </div>
                         );
                       })}
@@ -638,7 +653,7 @@ export default function MatchesView({
                 Tournaments
               </h2>
               <button
-                onClick={() => setShowNewTournamentModal(true)}
+                onClick={handleOpenNewTournament}
                 className="btn btn-primary"
                 style={{ width: 'auto', padding: '0.5rem 1rem', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
               >
@@ -654,7 +669,7 @@ export default function MatchesView({
                   Create a tournament to track group and knockout stage games together with dedicated tournament records.
                 </p>
                 <button
-                  onClick={() => setShowNewTournamentModal(true)}
+                  onClick={handleOpenNewTournament}
                   className="btn btn-primary"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
                 >
@@ -769,7 +784,7 @@ export default function MatchesView({
             </div>
 
             <form onSubmit={handleCreateTournament}>
-              <div className="form-group mb-4">
+              <div className="form-group mb-3">
                 <label className="label">Tournament Name</label>
                 <input
                   type="text"
@@ -780,6 +795,82 @@ export default function MatchesView({
                   required
                   autoFocus
                 />
+              </div>
+
+              {/* Tournament Available Players Section */}
+              <div className="form-group mb-4">
+                <div className="flex-between mb-2">
+                  <label className="label" style={{ marginBottom: 0 }}>
+                    Available Tournament Squad ({newTourneySquadSelection.length} selected)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewTourneySquadSelection(
+                        newTourneySquadSelection.length === squad.length ? [] : squad.map((p) => p.id)
+                      )
+                    }
+                    className="btn-icon-subtle"
+                    style={{ fontSize: '0.78rem' }}
+                  >
+                    {newTourneySquadSelection.length === squad.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                </div>
+                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                  Only selected players will be available for matches in this tournament.
+                </p>
+                <div
+                  style={{
+                    maxHeight: '160px',
+                    overflowY: 'auto',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: '0.4rem',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '0.35rem'
+                  }}
+                >
+                  {squad.map((player) => {
+                    const isSelected = newTourneySquadSelection.includes(player.id);
+                    const isOff = isPlayerDefaultOff(player.id);
+                    return (
+                      <div
+                        key={player.id}
+                        onClick={() => {
+                          setNewTourneySquadSelection((prev) =>
+                            prev.includes(player.id) ? prev.filter((id) => id !== player.id) : [...prev, player.id]
+                          );
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.4rem',
+                          padding: '0.35rem 0.5rem',
+                          borderRadius: 'var(--radius-md)',
+                          backgroundColor: isSelected ? 'var(--color-primary-light)' : 'transparent',
+                          color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-main)',
+                          cursor: 'pointer',
+                          fontWeight: isSelected ? 600 : 400,
+                          fontSize: '0.8rem'
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          style={{ pointerEvents: 'none' }}
+                        />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {player.name}
+                        </span>
+                        {isOff && (
+                          <span style={{ fontSize: '0.65rem', opacity: 0.75, color: 'var(--color-text-muted)' }}>Off</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
@@ -793,7 +884,7 @@ export default function MatchesView({
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={!newTourneyName.trim()}
+                  disabled={!newTourneyName.trim() || newTourneySquadSelection.length === 0}
                 >
                   Open Tournament
                 </button>

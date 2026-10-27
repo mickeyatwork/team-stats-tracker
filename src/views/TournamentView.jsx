@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Trophy, Plus, X, Eye, Play, Edit2, Trash2, CheckCircle } from 'lucide-react';
+import { Trophy, Plus, X, Eye, Play, Edit2, Trash2, CheckCircle, Users } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
-import { parseTournament, encodeTournament, KNOCKOUT_ROUNDS, isTournamentFinished, setTournamentFinishedStatus, saveTournament } from '../utils/tournamentUtils';
+import { parseTournament, encodeTournament, KNOCKOUT_ROUNDS, isTournamentFinished, setTournamentFinishedStatus, saveTournament, getTournamentAvailablePlayers, setTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
+import { isPlayerDefaultOff } from '../utils/playerPreferences';
 
 export default function TournamentView({
   tournamentName,
@@ -20,13 +21,30 @@ export default function TournamentView({
   const [matchToDelete, setMatchToDelete] = useState(null);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [isFinished, setIsFinished] = useState(() => isTournamentFinished(tournamentName));
+  const [tournamentAvailableIds, setTournamentAvailableIds] = useState(() => {
+    const saved = getTournamentAvailablePlayers(tournamentName);
+    return saved && saved.length > 0 ? saved : squad.map((p) => p.id);
+  });
+  const [showEditSquadModal, setShowEditSquadModal] = useState(false);
+  const [editTourneySquadSelection, setEditTourneySquadSelection] = useState([]);
 
   useEffect(() => {
     setIsFinished(isTournamentFinished(tournamentName));
     if (tournamentName) {
       saveTournament(tournamentName);
+      const saved = getTournamentAvailablePlayers(tournamentName);
+      if (saved && saved.length > 0) {
+        setTournamentAvailableIds(saved);
+      } else {
+        setTournamentAvailableIds(squad.map((p) => p.id));
+      }
     }
-  }, [tournamentName]);
+  }, [tournamentName, squad]);
+
+  const tournamentAvailableSquad = useMemo(() => {
+    const available = squad.filter((p) => tournamentAvailableIds.includes(p.id));
+    return available.length > 0 ? available : squad;
+  }, [squad, tournamentAvailableIds]);
 
   // Add Match Form State
   const [stageType, setStageType] = useState('Group Stage'); // 'Group Stage' | 'Knockout Stage'
@@ -36,9 +54,23 @@ export default function TournamentView({
   const [opponent, setOpponent] = useState('');
   const [matchDate, setMatchDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [matchVariant, setMatchVariant] = useState(getDefaultMatchVariant);
-  const [selectedSquad, setSelectedSquad] = useState(() => squad.map((p) => p.id));
+  const [selectedSquad, setSelectedSquad] = useState(() => {
+    const activeTourneySquad = tournamentAvailableSquad.length > 0 ? tournamentAvailableSquad : squad;
+    return activeTourneySquad.map((p) => p.id);
+  });
   const [hideScore, setHideScore] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const openAddMatchModal = (stage = 'Group Stage') => {
+    setStageType(stage);
+    setMatchVariant(getDefaultMatchVariant());
+    setOpponent('');
+    setCustomRoundName('');
+    const activeTourneySquad = tournamentAvailableSquad.length > 0 ? tournamentAvailableSquad : squad;
+    // Once selected for the tournament squad, default off flag does not apply for subsequent tournament matches
+    setSelectedSquad(activeTourneySquad.map((p) => p.id));
+    setShowAddMatchModal(true);
+  };
 
   // Filter tournament matches
   const tournamentMatches = useMemo(() => {
@@ -274,11 +306,36 @@ export default function TournamentView({
                     </span>
                   )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.8rem', color: 'var(--color-text-muted)', flexWrap: 'wrap' }}>
                   <span className="badge badge-amber" style={{ fontSize: '0.7rem', padding: '0.15rem 0.45rem' }}>
                     Tournament
                   </span>
                   <span>{tournamentMatches.length} {tournamentMatches.length === 1 ? 'game' : 'games'} played</span>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditTourneySquadSelection(tournamentAvailableIds);
+                      setShowEditSquadModal(true);
+                    }}
+                    style={{
+                      background: 'var(--color-bg-body)',
+                      border: '1px solid var(--color-border)',
+                      color: 'var(--color-text-main)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.15rem 0.5rem',
+                      borderRadius: 'var(--radius-md)'
+                    }}
+                    title="Click to view or edit available players for this tournament"
+                  >
+                    <Users size={12} style={{ color: 'var(--color-primary)' }} />
+                    {tournamentAvailableSquad.length} Available {tournamentAvailableSquad.length === 1 ? 'Player' : 'Players'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -297,9 +354,8 @@ export default function TournamentView({
                 <>
                   <button
                     onClick={() => {
-                      setStageType(groupMatches.length >= 3 && knockoutMatches.length === 0 ? 'Knockout Stage' : 'Group Stage');
-                      setMatchVariant(getDefaultMatchVariant());
-                      setShowAddMatchModal(true);
+                      const stage = groupMatches.length >= 3 && knockoutMatches.length === 0 ? 'Knockout Stage' : 'Group Stage';
+                      openAddMatchModal(stage);
                     }}
                     className="btn btn-primary"
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', width: 'auto' }}
@@ -377,11 +433,7 @@ export default function TournamentView({
             </h3>
             {!isFinished && (
               <button
-                onClick={() => {
-                  setStageType('Group Stage');
-                  setMatchVariant(getDefaultMatchVariant());
-                  setShowAddMatchModal(true);
-                }}
+                onClick={() => openAddMatchModal('Group Stage')}
                 className="btn btn-secondary"
                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
               >
@@ -571,11 +623,7 @@ export default function TournamentView({
             </h3>
             {!isFinished && (
               <button
-                onClick={() => {
-                  setStageType('Knockout Stage');
-                  setMatchVariant(getDefaultMatchVariant());
-                  setShowAddMatchModal(true);
-                }}
+                onClick={() => openAddMatchModal('Knockout Stage')}
                 className="btn btn-secondary"
                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
               >
@@ -875,21 +923,25 @@ export default function TournamentView({
                 </select>
               </div>
 
-              {/* Squad Selection */}
+              {/* Squad Selection: restricted to tournament available players */}
               <div className="form-group mb-4">
                 <div className="flex-between mb-2">
                   <label className="label" style={{ marginBottom: 0 }}>
-                    Match Squad ({selectedSquad.length} selected)
+                    Match Squad ({selectedSquad.length} of {tournamentAvailableSquad.length} selected)
                   </label>
                   <button
                     type="button"
                     onClick={() =>
-                      setSelectedSquad(selectedSquad.length === squad.length ? [] : squad.map((p) => p.id))
+                      setSelectedSquad(
+                        selectedSquad.length === tournamentAvailableSquad.length
+                          ? []
+                          : tournamentAvailableSquad.map((p) => p.id)
+                      )
                     }
                     className="btn-icon-subtle"
                     style={{ fontSize: '0.75rem' }}
                   >
-                    {selectedSquad.length === squad.length ? 'Deselect All' : 'Select All'}
+                    {selectedSquad.length === tournamentAvailableSquad.length ? 'Deselect All' : 'Select All'}
                   </button>
                 </div>
 
@@ -905,7 +957,7 @@ export default function TournamentView({
                     gap: '0.35rem'
                   }}
                 >
-                  {squad.map((p) => {
+                  {tournamentAvailableSquad.map((p) => {
                     const isSelected = selectedSquad.includes(p.id);
                     return (
                       <div
@@ -930,7 +982,7 @@ export default function TournamentView({
                           onChange={() => { }} // handled by parent onClick
                           style={{ pointerEvents: 'none' }}
                         />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                           {p.name}
                         </span>
                       </div>
@@ -1023,6 +1075,120 @@ export default function TournamentView({
                 style={{ width: 'auto', backgroundColor: 'var(--color-danger)', color: '#fff' }}
               >
                 Delete Match
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal: Edit Tournament Available Squad */}
+      {showEditSquadModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '440px' }}>
+            <div className="flex-between mb-3">
+              <h3 className="title-md" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Users size={18} style={{ color: 'var(--color-primary)' }} />
+                Available Tournament Squad
+              </h3>
+              <button className="btn-icon" onClick={() => setShowEditSquadModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem', lineHeight: 1.4 }}>
+              Select which players are attending <strong>{tournamentName}</strong>. Only these players will be selectable for matches in this tournament.
+            </p>
+
+            <div className="flex-between mb-2">
+              <label className="label" style={{ marginBottom: 0 }}>
+                Selected ({editTourneySquadSelection.length} of {squad.length})
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  setEditTourneySquadSelection(
+                    editTourneySquadSelection.length === squad.length ? [] : squad.map((p) => p.id)
+                  )
+                }
+                className="btn-icon-subtle"
+                style={{ fontSize: '0.75rem' }}
+              >
+                {editTourneySquadSelection.length === squad.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+
+            <div
+              style={{
+                maxHeight: '220px',
+                overflowY: 'auto',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg)',
+                padding: '0.4rem',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '0.35rem',
+                marginBottom: '1.25rem'
+              }}
+            >
+              {squad.map((p) => {
+                const isSelected = editTourneySquadSelection.includes(p.id);
+                const isOff = isPlayerDefaultOff(p.id);
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      setEditTourneySquadSelection((prev) =>
+                        prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id]
+                      );
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      padding: '0.35rem 0.5rem',
+                      borderRadius: 'var(--radius-md)',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      background: isSelected ? 'var(--color-primary-light)' : 'transparent',
+                      color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-main)'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {}}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                      {p.name}
+                    </span>
+                    {isOff && (
+                      <span style={{ fontSize: '0.65rem', opacity: 0.75, color: 'var(--color-text-muted)' }}>Off</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowEditSquadModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={editTourneySquadSelection.length === 0}
+                onClick={() => {
+                  setTournamentAvailablePlayers(tournamentName, editTourneySquadSelection);
+                  setTournamentAvailableIds(editTourneySquadSelection);
+                  setShowEditSquadModal(false);
+                }}
+              >
+                Save Tournament Squad
               </button>
             </div>
           </div>
