@@ -34,16 +34,21 @@ export default function MatchTrackerView({
   const [opponentInput, setOpponentInput] = useState(activeMatch?.opponent || '');
   const [showAmendSquad, setShowAmendSquad] = useState(false);
   const [assistModalScorer, setAssistModalScorer] = useState(null);
+  const [attemptModalPlayer, setAttemptModalPlayer] = useState(null);
   const [playerToRemove, setPlayerToRemove] = useState(null); // { id, name }
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('matchTrackerViewMode') || 'table';
   });
+  const [showGkDialog, setShowGkDialog] = useState(false);
+  const [showDCDialog, setShowDCDialog] = useState(false);
+  const [justTappedDCId, setJustTappedDCId] = useState(null);
 
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
 
   // Timeline State
   const [goalEvents, setGoalEvents] = useState([]);
+  const [_attemptEvents, setAttemptEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [showTimeline, setShowTimeline] = useState(true);
   const [assigningGoalEvent, setAssigningGoalEvent] = useState(null);
@@ -70,11 +75,30 @@ export default function MatchTrackerView({
     setLoadingEvents(false);
   };
 
+  // Fetch attempt events for active match
+  const fetchAttemptEvents = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('attempt_events')
+        .select('*')
+        .eq('match_id', activeMatch.id)
+        .order('created_at', { ascending: true });
+      if (!error && data) {
+        setAttemptEvents(data);
+      }
+    } catch {
+      // attempt_events table may not exist yet
+    }
+  };
+
   useEffect(() => {
     if (activeMatch?.id) {
       fetchGoalEvents();
+      if (showAttempts) {
+        fetchAttemptEvents();
+      }
     }
-  }, [activeMatch?.id]);
+  }, [activeMatch?.id, showAttempts]);
 
   // Autosave Match Score
   const saveMatchScoreToDb = useDebounceCallback(async (matchId, teamGoals, oppGoals) => {
@@ -205,6 +229,67 @@ export default function MatchTrackerView({
     setAssistModalScorer(playerId);
   };
 
+  const handleAttemptClick = (playerId) => {
+    setAttemptModalPlayer(playerId);
+  };
+
+  const handleAttemptResult = async (result) => {
+    const playerId = attemptModalPlayer;
+    if (!playerId) return;
+
+    if (result === 'scored') {
+      setAttemptModalPlayer(null);
+      setAssistModalScorer(playerId);
+    } else {
+      updateMatchStat(activeMatch.id, playerId, 'attempts', 1);
+      setAttemptModalPlayer(null);
+
+      // Persist to attempt_events table
+      try {
+        const { data, error } = await supabase.from('attempt_events').insert([{
+          match_id: activeMatch.id,
+          player_id: playerId,
+          result: result,
+          created_at: new Date().toISOString()
+        }]).select().single();
+        if (!error && data) {
+          setAttemptEvents((prev) => [...prev, data]);
+        }
+      } catch (err) {
+        console.warn('Could not insert attempt_event:', err);
+      }
+    }
+  };
+
+  const handleAttemptDecrement = async (playerId) => {
+    const m = matches.find((x) => x.id === activeMatch.id);
+    if (!m || (m.stats[playerId]?.attempts || 0) === 0) return;
+
+    updateMatchStat(activeMatch.id, playerId, 'attempts', -1);
+
+    try {
+      const { data } = await supabase
+        .from('attempt_events')
+        .select('id')
+        .eq('match_id', activeMatch.id)
+        .eq('player_id', playerId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (data && data.length > 0) {
+        await supabase.from('attempt_events').delete().eq('id', data[0].id);
+        setAttemptEvents((prev) => {
+          const idx = [...prev].reverse().findIndex((e) => e.id === data[0].id);
+          if (idx === -1) return prev;
+          const actualIdx = prev.length - 1 - idx;
+          return prev.filter((_, i) => i !== actualIdx);
+        });
+      }
+    } catch (err) {
+      console.warn('Could not delete from attempt_events:', err);
+    }
+  };
+
   const processGoalWithAssist = async (assisterId) => {
     const scorerId = assistModalScorer;
     setAssistModalScorer(null);
@@ -289,6 +374,23 @@ export default function MatchTrackerView({
       setGoalEvents((prev) => [...prev, newEvt]);
       if (setAllGoalEvents) setAllGoalEvents((prev) => [...prev, newEvt]);
     }
+
+    // Also log to attempt_events as scored if attempts tracking is enabled
+    if (showAttempts) {
+      try {
+        const { data: attemptEvt } = await supabase.from('attempt_events').insert([{
+          match_id: activeMatch.id,
+          player_id: scorerId,
+          result: 'scored',
+          created_at: new Date().toISOString()
+        }]).select().single();
+        if (attemptEvt) {
+          setAttemptEvents((prev) => [...prev, attemptEvt]);
+        }
+      } catch (err) {
+        console.warn('Could not insert scored attempt_event:', err);
+      }
+    }
   };
 
   const processGoalDecrement = async (playerId) => {
@@ -369,6 +471,25 @@ export default function MatchTrackerView({
       await supabase.from('goal_events').delete().eq('id', eventToDelete.id);
       setGoalEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
       if (setAllGoalEvents) setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
+
+      if (showAttempts) {
+        try {
+          const { data: attData } = await supabase
+            .from('attempt_events')
+            .select('id')
+            .eq('match_id', activeMatch.id)
+            .eq('player_id', playerId)
+            .eq('result', 'scored')
+            .order('created_at', { ascending: false })
+            .limit(1);
+          if (attData && attData.length > 0) {
+            await supabase.from('attempt_events').delete().eq('id', attData[0].id);
+            setAttemptEvents((prev) => prev.filter((e) => e.id !== attData[0].id));
+          }
+        } catch (err) {
+          console.warn('Could not delete scored attempt event:', err);
+        }
+      }
       
       if (eventToDelete.assister_id && m.stats[eventToDelete.assister_id]) {
         const aStats = m.stats[eventToDelete.assister_id];
@@ -486,6 +607,25 @@ export default function MatchTrackerView({
 
         setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats, team_goals: newTeamGoals } : match)));
         saveMatchScoreToDb(activeMatch.id, newTeamGoals, m.opponent_goals);
+
+        if (showAttempts) {
+          try {
+            const { data: attData } = await supabase
+              .from('attempt_events')
+              .select('id')
+              .eq('match_id', activeMatch.id)
+              .eq('player_id', eventToDelete.scorer_id)
+              .eq('result', 'scored')
+              .order('created_at', { ascending: false })
+              .limit(1);
+            if (attData && attData.length > 0) {
+              await supabase.from('attempt_events').delete().eq('id', attData[0].id);
+              setAttemptEvents((prev) => prev.filter((e) => e.id !== attData[0].id));
+            }
+          } catch (err) {
+            console.warn('Could not delete scored attempt event:', err);
+          }
+        }
       }
     }
   };
@@ -652,6 +792,7 @@ export default function MatchTrackerView({
         .sort((a, b) => a.name.localeCompare(b.name))
     : [];
 
+  const goalkeepers = playersInMatch.filter((p) => p.is_goalkeeper);
   const totalGoals = playersInMatch.reduce((sum, p) => sum + p.goals, 0);
   const totalAssists = playersInMatch.reduce((sum, p) => sum + p.assists, 0);
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
@@ -890,6 +1031,35 @@ export default function MatchTrackerView({
           )}
         </div>
 
+        {/* Roles & Quick Action Section */}
+        <div className="tracker-actions-bar">
+          <button
+            type="button"
+            onClick={() => setShowGkDialog(true)}
+            className="btn-action-tracker btn-action-gk"
+            title="Manage Match Goalkeepers"
+          >
+            <span className="btn-action-title">Goalkeepers</span>
+            <span className="btn-action-badge gk">
+              {goalkeepers.length > 0
+                ? goalkeepers.map((g) => g.name).join(', ')
+                : 'None assigned'}
+            </span>
+          </button>
+
+          {showDC && (
+            <button
+              type="button"
+              onClick={() => setShowDCDialog(true)}
+              className="btn-action-tracker btn-action-dc"
+              title="Quickly record defensive contributions"
+            >
+              <span className="btn-action-title">Record Defensive Contributions</span>
+              {totalDC > 0 && <span className="btn-action-badge dc">{totalDC}</span>}
+            </button>
+          )}
+        </div>
+
         {/* Matchday Squad Header */}
         <div className="flex-between mb-3 mt-4" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -951,14 +1121,10 @@ export default function MatchTrackerView({
                 <div key={player.id} className="stat-card-row">
                   <div className="stat-card-top">
                     <div className="stat-card-player">
-                      <button
-                        onClick={() => toggleGoalkeeper(activeMatch.id, player.id)}
-                        title="Toggle Goalkeeper Status"
-                        className={`btn-gk-toggle ${player.is_goalkeeper ? 'active' : ''}`}
-                      >
-                        GK
-                      </button>
                       <span className="stat-card-name">{player.name}</span>
+                      {player.is_goalkeeper && (
+                        <span className="badge-gk-mini" title="Goalkeeper">GK</span>
+                      )}
                     </div>
                     {!teamInfo.hide_positions && player.position && (
                       <span className="badge-pos">{player.position}</span>
@@ -1001,7 +1167,7 @@ export default function MatchTrackerView({
                         </div>
                         <div className="stat-card-control">
                           <button
-                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', -1)}
+                            onClick={() => handleAttemptDecrement(player.id)}
                             className="btn-stat"
                             aria-label={`Decrease attempts for ${player.name}`}
                           >
@@ -1009,7 +1175,7 @@ export default function MatchTrackerView({
                           </button>
                           <span className="stat-value">{player.attempts}</span>
                           <button
-                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', 1)}
+                            onClick={() => handleAttemptClick(player.id)}
                             className="btn-stat-plus attempts"
                             aria-label={`Add attempt for ${player.name}`}
                           >
@@ -1134,12 +1300,11 @@ export default function MatchTrackerView({
             </div>
           ) : (
             /* =======================================
-               Table Mode (Compact Single-Row View)
+               Table Mode (Compact Single-Row View with Sticky Player Column)
                ======================================= */
-            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <div className="stats-table-wrapper">
               <div className="stats-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
-                  <span style={{ width: '32px', textAlign: 'center', fontSize: '0.65rem', color: 'var(--color-text-light)' }} title="Played in goal">GK?</span>
+                <div className="stat-player-col">
                   <span>Player</span>
                 </div>
 
@@ -1168,17 +1333,14 @@ export default function MatchTrackerView({
 
               {playersInMatch.map((player) => (
                 <div key={player.id} className="stat-row">
-                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: '0.5rem' }}>
-                    <button
-                      onClick={() => toggleGoalkeeper(activeMatch.id, player.id)}
-                      title="Toggle Goalkeeper Status"
-                      className={`btn-gk-toggle ${player.is_goalkeeper ? 'active' : ''}`}
-                    >
-                      GK
-                    </button>
-                    
-                    <div className="stat-player-info" style={{ flex: 1, margin: 0 }}>
-                      <span className="stat-player-name">{player.name}</span>
+                  <div className="stat-player-col">
+                    <div className="stat-player-info">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span className="stat-player-name">{player.name}</span>
+                        {player.is_goalkeeper && (
+                          <span className="badge-gk-mini" title="Goalkeeper">GK</span>
+                        )}
+                      </div>
                       {!teamInfo.hide_positions && player.position && (
                         <div style={{ marginTop: '0.1rem' }}>
                           <span className="stat-player-pos">{player.position}</span>
@@ -1211,7 +1373,7 @@ export default function MatchTrackerView({
                     {showAttempts && (
                       <div className="stat-control-group">
                         <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', -1)}
+                          onClick={() => handleAttemptDecrement(player.id)}
                           className="btn-stat"
                           aria-label={`Decrease attempts for ${player.name}`}
                         >
@@ -1219,7 +1381,7 @@ export default function MatchTrackerView({
                         </button>
                         <span className="stat-value">{player.attempts}</span>
                         <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', 1)}
+                          onClick={() => handleAttemptClick(player.id)}
                           className="btn-stat-plus attempts"
                           aria-label={`Add attempt for ${player.name}`}
                         >
@@ -1293,7 +1455,9 @@ export default function MatchTrackerView({
               {/* Table Totals Footer */}
               {playersInMatch.length > 0 && (
                 <div className="stat-totals-footer">
-                  <span className="stat-totals-label">Totals</span>
+                  <div className="stat-player-col">
+                    <span className="stat-totals-label">Totals</span>
+                  </div>
                   <div className="stat-cols-3">
                     <div className="stat-total-cell goals">{totalGoals}</div>
                     {showAttempts && <div className="stat-total-cell attempts">{totalAttempts}</div>}
@@ -1425,6 +1589,102 @@ export default function MatchTrackerView({
                 <button onClick={() => setPlayerToRemove(null)} className="btn btn-secondary" style={{ flex: 1 }}>
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Attempt Result Modal */}
+        {attemptModalPlayer && (
+          <div className="modal-overlay" onClick={() => setAttemptModalPlayer(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+              <div className="flex-between mb-3">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    width: '2rem',
+                    height: '2rem',
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'rgba(234, 88, 12, 0.15)',
+                    color: '#ea580c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <Crosshair size={18} />
+                  </div>
+                  <div>
+                    <h3 className="title-md" style={{ marginBottom: 0 }}>Attempt on Goal</h3>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                      {playersInMatch.find(p => p.id === attemptModalPlayer)?.name}
+                    </span>
+                  </div>
+                </div>
+                <button onClick={() => setAttemptModalPlayer(null)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                What was the outcome of this attempt on goal?
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                {/* Scored */}
+                <div
+                  onClick={() => handleAttemptResult('scored')}
+                  className="attempt-choice-card scored"
+                >
+                  <div className="attempt-choice-icon scored">
+                    ⚽
+                  </div>
+                  <div className="attempt-choice-text">
+                    <span className="attempt-choice-title scored">Scored (Goal)</span>
+                    <span className="attempt-choice-desc">Logs goal, adds attempt, and assigns assist</span>
+                  </div>
+                </div>
+
+                {/* Saved */}
+                <div
+                  onClick={() => handleAttemptResult('saved')}
+                  className="attempt-choice-card saved"
+                >
+                  <div className="attempt-choice-icon saved">
+                    🧤
+                  </div>
+                  <div className="attempt-choice-text">
+                    <span className="attempt-choice-title saved">Saved</span>
+                    <span className="attempt-choice-desc">Shot on target saved by opposition goalkeeper</span>
+                  </div>
+                </div>
+
+                {/* Missed / Off Target */}
+                <div
+                  onClick={() => handleAttemptResult('missed')}
+                  className="attempt-choice-card missed"
+                >
+                  <div className="attempt-choice-icon missed">
+                    ❌
+                  </div>
+                  <div className="attempt-choice-text">
+                    <span className="attempt-choice-title missed">Missed (Off Target)</span>
+                    <span className="attempt-choice-desc">Shot wide or over the crossbar</span>
+                  </div>
+                </div>
+
+                {/* Blocked */}
+                <div
+                  onClick={() => handleAttemptResult('blocked')}
+                  className="attempt-choice-card blocked"
+                >
+                  <div className="attempt-choice-icon blocked">
+                    🛡️
+                  </div>
+                  <div className="attempt-choice-text">
+                    <span className="attempt-choice-title blocked">Blocked</span>
+                    <span className="attempt-choice-desc">Shot blocked by an outfield defender</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1581,6 +1841,224 @@ export default function MatchTrackerView({
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Assign Goalkeeper Modal */}
+        {showGkDialog && (
+          <div className="modal-overlay" onClick={() => setShowGkDialog(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="flex-between mb-3">
+                <h3 className="title-md" style={{ marginBottom: 0 }}>Goalkeepers</h3>
+                <button onClick={() => setShowGkDialog(false)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Select which player(s) played in goal for this match. Multiple goalkeepers can be selected if players rotated.
+              </p>
+
+              <div style={{ maxHeight: '55vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingRight: '0.2rem' }}>
+                {playersInMatch.map((player) => {
+                  const isGk = !!player.is_goalkeeper;
+                  return (
+                    <div
+                      key={player.id}
+                      onClick={() => toggleGoalkeeper(activeMatch.id, player.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0.7rem 0.85rem',
+                        cursor: 'pointer',
+                        background: isGk ? 'rgba(180, 83, 9, 0.12)' : 'var(--color-bg-card)',
+                        border: `1.5px solid ${isGk ? '#b45309' : 'var(--color-border-light)'}`,
+                        borderRadius: 'var(--radius-xl)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                        <div
+                          className="avatar"
+                          style={{
+                            background: isGk ? '#b45309' : 'var(--color-border-light)',
+                            color: isGk ? '#ffffff' : 'var(--color-text-muted)',
+                            width: '2.2rem',
+                            height: '2.2rem',
+                            fontWeight: 700,
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem', color: isGk ? '#b45309' : 'var(--color-text-main)' }}>
+                            {player.name}
+                          </div>
+                          {!teamInfo.hide_positions && player.position && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+                              {player.position}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        {isGk ? (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#ffffff',
+                            backgroundColor: '#b45309',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 'var(--radius-full)'
+                          }}>
+                            <Check size={13} /> GK
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: 'var(--color-text-light)',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 'var(--radius-full)',
+                            border: '1px solid var(--color-border)'
+                          }}>
+                            Assign
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setShowGkDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Record Defensive Contributions Modal */}
+        {showDCDialog && (
+          <div className="modal-overlay" onClick={() => setShowDCDialog(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+              <div className="flex-between mb-3">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    width: '2.25rem',
+                    height: '2.25rem',
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'rgba(8, 145, 178, 0.15)',
+                    color: '#0891b2',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <ShieldCheck size={20} />
+                  </div>
+                  <div>
+                    <h3 className="title-md" style={{ marginBottom: 0 }}>Record Defensive Contribution</h3>
+                    <span style={{ fontSize: '0.75rem', color: '#0891b2', fontWeight: 700 }}>
+                      Match Total: {totalDC}
+                    </span>
+                  </div>
+                </div>
+                <button onClick={() => setShowDCDialog(false)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Tap any player to instantly record a defensive contribution (tackle, interception, block, or clearance).
+              </p>
+
+              <div style={{ maxHeight: '60vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.2rem' }}>
+                {playersInMatch.map((player) => {
+                  const isJustTapped = justTappedDCId === player.id;
+                  return (
+                    <div
+                      key={player.id}
+                      className={`dc-player-tap-card ${isJustTapped ? 'just-tapped' : ''}`}
+                    >
+                      <div
+                        className="dc-player-tap-main"
+                        onClick={() => {
+                          updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1);
+                          setJustTappedDCId(player.id);
+                          setTimeout(() => setJustTappedDCId((curr) => (curr === player.id ? null : curr)), 350);
+                        }}
+                      >
+                        <div
+                          className="avatar"
+                          style={{
+                            backgroundColor: isJustTapped ? '#0891b2' : 'var(--color-border-light)',
+                            color: isJustTapped ? '#ffffff' : 'var(--color-text-main)',
+                            fontWeight: 700,
+                            fontSize: '0.9rem',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text-main)' }}>
+                            {player.name}
+                          </div>
+                          {!teamInfo.hide_positions && player.position && (
+                            <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+                              {player.position}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="dc-player-tap-actions">
+                        <button
+                          type="button"
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1)}
+                          disabled={player.defensive_contributions === 0}
+                          className="btn-dc-tap-minus"
+                          title={`Decrease DC for ${player.name}`}
+                          aria-label={`Decrease DC for ${player.name}`}
+                          style={{ opacity: player.defensive_contributions === 0 ? 0.35 : 1 }}
+                        >
+                          -
+                        </button>
+
+                        <div className="dc-counter-badge" title="Total Defensive Contributions">
+                          <ShieldCheck size={13} />
+                          <span>{player.defensive_contributions}</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1);
+                            setJustTappedDCId(player.id);
+                            setTimeout(() => setJustTappedDCId((curr) => (curr === player.id ? null : curr)), 350);
+                          }}
+                          className="btn-dc-tap-plus"
+                          title={`Add Defensive Contribution for ${player.name}`}
+                        >
+                          <Plus size={14} /> +1
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setShowDCDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
+                Done
+              </button>
             </div>
           </div>
         )}
