@@ -12,6 +12,8 @@ export default function MatchesView({
   squad,
   teamInfo,
   allTeams,
+  allClubs = [],
+  currentUserProfile,
   onSelectTeam,
   onAddNewTeam,
   setCurrentView,
@@ -76,6 +78,7 @@ export default function MatchesView({
 
     const dbMatch = {
       user_id: session.user.id,
+      team_id: teamInfo?.id || null,
       date: new Date(newMatchDate).toISOString(),
       opponent: newMatchOpponent,
       competition: newMatchCompType,
@@ -236,12 +239,14 @@ export default function MatchesView({
   return (
     <div className="app-container">
       <TopNav
-        title={teamInfo.name}
+        title="Matchday View"
         showTabs={true}
         currentView="matches"
         setCurrentView={setCurrentView}
         teamInfo={teamInfo}
         allTeams={allTeams}
+        allClubs={allClubs}
+        currentUserProfile={currentUserProfile}
         onSelectTeam={onSelectTeam}
         onAddNewTeam={onAddNewTeam}
       />

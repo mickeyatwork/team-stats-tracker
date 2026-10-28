@@ -10,6 +10,8 @@ export default function SquadView({
   session,
   teamInfo,
   allTeams,
+  allClubs = [],
+  currentUserProfile,
   onSelectTeam,
   onAddNewTeam,
   setCurrentView
@@ -33,6 +35,7 @@ export default function SquadView({
     const newPlayerObj = {
       id: tempId,
       user_id: session.user.id,
+      team_id: teamInfo?.id || null,
       name: newPlayerName.trim(),
       position: newPlayerPos
     };
@@ -48,7 +51,14 @@ export default function SquadView({
 
     const { data, error } = await supabase
       .from('squad')
-      .insert([{ user_id: session.user.id, name: newPlayerObj.name, position: newPlayerObj.position }])
+      .insert([
+        {
+          user_id: session.user.id,
+          team_id: teamInfo?.id || null,
+          name: newPlayerObj.name,
+          position: newPlayerObj.position
+        }
+      ])
       .select();
 
     if (error) {
@@ -81,6 +91,8 @@ export default function SquadView({
         setCurrentView={setCurrentView}
         teamInfo={teamInfo}
         allTeams={allTeams}
+        allClubs={allClubs}
+        currentUserProfile={currentUserProfile}
         onSelectTeam={onSelectTeam}
         onAddNewTeam={onAddNewTeam}
       />

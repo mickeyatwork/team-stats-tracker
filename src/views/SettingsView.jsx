@@ -1,17 +1,43 @@
 import { useState, useEffect } from 'react';
-import { LogOut, User, Lock, Mail, Shield, Plus, Check, Edit3, Sliders, Palette, Calendar } from 'lucide-react';
+import {
+  LogOut,
+  User,
+  Lock,
+  Mail,
+  Shield,
+  Plus,
+  Check,
+  Edit3,
+  Sliders,
+  Palette,
+  Calendar,
+  Users,
+  Building2,
+  ToggleLeft
+} from 'lucide-react';
 import TopNav from '../components/TopNav';
+import UserManagementTab from '../components/UserManagementTab';
+import ClubManagementModal from '../components/ClubManagementModal';
 import { supabase } from '../supabaseClient';
 import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
 import { FEATURE_KEYS, isFeatureEnabled, setFeatureFlag } from '../utils/featureFlags';
 import { THEME_CONFIGS, getSavedTheme, applyTheme } from '../utils/themePreferences';
+import {
+  isDevAdmin,
+  hasAdminPrivileges,
+  canManageFeatureFlags,
+  canManageClubs
+} from '../utils/authRoles';
 
 export default function SettingsView({
   session,
+  currentUserProfile,
   teamInfo,
   setTeamInfo,
-  allTeams,
+  allTeams = [],
   setAllTeams,
+  allClubs = [],
+  setAllClubs,
   onSelectTeam,
   onAddNewTeam,
   setCurrentView,
@@ -35,18 +61,17 @@ export default function SettingsView({
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
 
-  // Admin Privileges Check
-  const isAdmin = Boolean(
-    session?.user && (
-      session.user.app_metadata?.role === 'admin' ||
-      session.user.user_metadata?.is_admin === true ||
-      session.user.user_metadata?.role === 'admin' ||
-      session.user.user_metadata?.role !== 'viewer'
-    )
-  );
+  // RBAC Privileges
+  const isDev = isDevAdmin(currentUserProfile);
+  const isAdmin = hasAdminPrivileges(currentUserProfile);
+  const showDevFeatures = canManageFeatureFlags(currentUserProfile);
+  const showClubManager = canManageClubs(currentUserProfile);
 
-  // Settings Tab State: 'preferences' (default) | 'admin'
+  // Settings Tab State: 'preferences' | 'admin' | 'features' | 'users'
   const [settingsTab, setSettingsTab] = useState('preferences');
+
+  // Club Management Modal state
+  const [showClubModal, setShowClubModal] = useState(false);
 
   // Theme selection state
   const [activeTheme, setActiveTheme] = useState(() => currentTheme || getSavedTheme());
@@ -79,6 +104,7 @@ export default function SettingsView({
   const [showAddTeamModal, setShowAddTeamModal] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
   const [newSeasonName, setNewSeasonName] = useState('');
+  const [newTeamClubId, setNewTeamClubId] = useState(() => currentUserProfile?.club_id || (allClubs[0]?.id || ''));
   const [addTeamLoading, setAddTeamLoading] = useState(false);
 
   const handleUpdateEmail = async (e) => {
@@ -161,7 +187,7 @@ export default function SettingsView({
       setDefaultMatchVariant(defaultVariant);
       setTeamInfo(updated);
       setAllTeams(allTeams.map((t) => (t.id === teamInfo.id ? updated : t)));
-      setTeamStatus({ loading: false, success: 'Team details and feature settings updated!', error: null });
+      setTeamStatus({ loading: false, success: 'Team details updated successfully!', error: null });
     } catch (error) {
       setTeamStatus({ loading: false, success: null, error: error.message });
     }
@@ -172,10 +198,15 @@ export default function SettingsView({
     if (!newTeamName || !newSeasonName) return;
     setAddTeamLoading(true);
 
+    const targetClubId = isDev
+      ? (newTeamClubId || (allClubs[0]?.id || null))
+      : (currentUserProfile?.club_id || (allClubs[0]?.id || null));
+
     const newTeamObj = {
       user_id: session.user.id,
-      name: newTeamName,
-      season: newSeasonName,
+      name: newTeamName.trim(),
+      season: newSeasonName.trim(),
+      club_id: targetClubId,
       hide_positions: false
     };
 
@@ -188,6 +219,13 @@ export default function SettingsView({
     }
 
     if (data) {
+      // Also automatically assign creator to this team in user_team_assignments
+      if (currentUserProfile?.id) {
+        await supabase.from('user_team_assignments').insert([
+          { user_profile_id: currentUserProfile.id, team_id: data.id }
+        ]);
+      }
+
       setAllTeams([data, ...allTeams]);
       setTeamInfo(data);
       setShowAddTeamModal(false);
@@ -201,6 +239,8 @@ export default function SettingsView({
     await supabase.auth.signOut();
   };
 
+  const activeClub = allClubs.find((c) => c.id === teamInfo?.club_id);
+
   return (
     <div className="app-container">
       <TopNav
@@ -208,30 +248,111 @@ export default function SettingsView({
         onBack={() => setCurrentView('matches')}
         currentView="settings"
         setCurrentView={setCurrentView}
+        teamInfo={teamInfo}
+        allTeams={allTeams}
+        allClubs={allClubs}
+        currentUserProfile={currentUserProfile}
       />
 
       <div className="view-container">
-        {/* Navigation Tabs (Only rendered if user has Admin privileges) */}
+        {/* Navigation Options List (Only rendered if user has Admin privileges) */}
         {isAdmin && (
-          <div className="tab-switch" style={{ marginBottom: '1.25rem' }}>
-            <button
-              type="button"
-              onClick={() => setSettingsTab('preferences')}
-              className={`tab-switch-btn ${settingsTab === 'preferences' ? 'active' : ''}`}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-            >
-              <Sliders size={16} />
-              <span>Preferences</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsTab('admin')}
-              className={`tab-switch-btn ${settingsTab === 'admin' ? 'active' : ''}`}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-            >
-              <Shield size={16} />
-              <span>Admin Controls</span>
-            </button>
+          <div className="card mb-4" style={{ padding: '0.6rem' }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.4rem 0.6rem 0.5rem 0.6rem' }}>
+              Settings Sections
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              {[
+                {
+                  id: 'preferences',
+                  label: 'Preferences',
+                  desc: 'Color theme, match format default & account details',
+                  icon: Sliders
+                },
+                {
+                  id: 'admin',
+                  label: 'Team Settings',
+                  desc: 'Team profiles, squad positions & club seasons',
+                  icon: Shield
+                },
+                {
+                  id: 'users',
+                  label: 'User Management',
+                  desc: 'Coaches, access roles, team assignments & invitations',
+                  icon: Users
+                },
+                ...(showDevFeatures
+                  ? [
+                      {
+                        id: 'features',
+                        label: 'Feature Switches',
+                        desc: 'Dev Admin analytics switches & dynamic metrics',
+                        icon: ToggleLeft
+                      }
+                    ]
+                  : [])
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const isActive = settingsTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSettingsTab(tab.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.7rem 0.85rem',
+                      borderRadius: 'var(--radius-lg)',
+                      border: '1px solid',
+                      borderColor: isActive ? 'var(--color-primary)' : 'transparent',
+                      background: isActive ? 'var(--color-primary-light)' : 'transparent',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <div
+                        style={{
+                          width: '34px',
+                          height: '34px',
+                          borderRadius: 'var(--radius-md)',
+                          background: isActive ? 'var(--color-primary)' : 'var(--color-border-light)',
+                          color: isActive ? 'white' : 'var(--color-text-muted)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}
+                      >
+                        <Icon size={17} />
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: '0.9rem',
+                            color: isActive ? 'var(--color-primary-dark)' : 'var(--color-text-main)'
+                          }}
+                        >
+                          {tab.label}
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>
+                          {tab.desc}
+                        </div>
+                      </div>
+                    </div>
+                    {isActive && (
+                      <span className="badge badge-primary" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
+                        Active
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -301,109 +422,87 @@ export default function SettingsView({
                             }}
                           >
                             {theme.name}
-                            {theme.isDefault && (
-                              <span
-                                style={{
-                                  fontSize: '0.65rem',
-                                  fontWeight: 700,
-                                  textTransform: 'uppercase',
-                                  padding: '0.1rem 0.35rem',
-                                  borderRadius: '4px',
-                                  background: isSelected ? 'rgba(255,255,255,0.7)' : 'var(--color-border)',
-                                  color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-muted)'
-                                }}
-                              >
-                                Default
-                              </span>
-                            )}
+                            {isSelected && <Check size={14} color="var(--color-primary)" />}
                           </div>
-                          <div style={{ fontSize: '0.75rem', color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-muted)' }}>
-                            {theme.subtitle}
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                            {theme.description}
                           </div>
                         </div>
                       </div>
-                      {isSelected && (
-                        <span className="badge badge-primary flex-row gap-1" style={{ marginLeft: '0.5rem', flexShrink: 0 }}>
-                          <Check size={12} /> Active
-                        </span>
-                      )}
                     </div>
                   );
                 })}
               </div>
-
-              <div
-                style={{
-                  marginTop: '1rem',
-                  padding: '0.65rem 0.85rem',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'var(--color-border-light)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  fontSize: '0.75rem',
-                  color: 'var(--color-text-muted)'
-                }}
-              >
-                <span>💡</span>
-                <span>Dark mode theme is planned for a future release!</span>
-              </div>
             </div>
 
-            {/* Match Preferences */}
+            {/* Default Match Format Preference */}
             <div className="card mt-4">
-              <h2 className="title-md flex-row gap-2 mb-2">
-                <Calendar size={18} color="var(--color-primary)" /> Match Preferences
-              </h2>
+              <div className="flex-between mb-2">
+                <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
+                  <Calendar size={18} color="var(--color-primary)" /> Default Match Format
+                </h2>
+              </div>
               <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Set your default match configuration for faster game setup.
+                Select the pre-selected match variant when scheduling new matches.
               </p>
-              <div className="form-group mb-2">
-                <label className="label">Default Match Format</label>
-                <select
-                  className="input"
-                  value={defaultVariant}
-                  onChange={(e) => {
-                    setDefaultVariant(e.target.value);
-                    setDefaultMatchVariant(e.target.value);
-                  }}
-                >
-                  {MATCH_VARIANTS.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
-                  New regular matches and tournament fixtures will default to this format.
-                </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                {Object.entries(MATCH_VARIANTS).map(([key, variant]) => {
+                  const isSelected = defaultVariant === key;
+                  return (
+                    <div
+                      key={key}
+                      onClick={() => {
+                        setDefaultVariant(key);
+                        setDefaultMatchVariant(key);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      style={{
+                        padding: '0.85rem 1rem',
+                        borderRadius: 'var(--radius-lg)',
+                        border: '2px solid',
+                        borderColor: isSelected ? 'var(--color-primary)' : 'var(--color-border)',
+                        background: isSelected ? 'var(--color-primary-light)' : 'var(--color-bg-card)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
+                          {variant.label}
+                        </div>
+                        {isSelected && <Check size={16} color="var(--color-primary)" />}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Update Account Email */}
+            {/* Change Email */}
             <div className="card mt-4">
               <h2 className="title-md flex-row gap-2 mb-2">
                 <Mail size={18} /> Update Email Address
               </h2>
-              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Current email: <strong>{session.user.email}</strong>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Current Email: <strong>{session?.user?.email}</strong>
               </p>
               <form onSubmit={handleUpdateEmail}>
                 <div className="input-group">
                   <label className="label">New Email Address</label>
                   <input
                     type="email"
+                    required
                     className="input"
-                    placeholder="newemail@example.com"
+                    placeholder="new-email@example.com"
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
-                    required
                   />
                 </div>
                 {emailStatus.error && <div className="alert alert-danger">{emailStatus.error}</div>}
                 {emailStatus.success && <div className="alert alert-success">{emailStatus.success}</div>}
                 <button type="submit" disabled={emailStatus.loading} className="btn btn-primary mt-2">
-                  {emailStatus.loading ? 'Updating...' : 'Update Email'}
+                  {emailStatus.loading ? 'Updating...' : 'Send Confirmation Email'}
                 </button>
               </form>
             </div>
@@ -411,49 +510,51 @@ export default function SettingsView({
             {/* Change Password */}
             <div className="card mt-4">
               <h2 className="title-md flex-row gap-2 mb-2">
-                <Lock size={18} /> Change Password
+                <Lock size={18} /> Update Password
               </h2>
               <form onSubmit={handleUpdatePassword}>
                 <div className="input-group">
                   <label className="label">New Password</label>
                   <input
                     type="password"
+                    required
                     className="input"
                     placeholder="••••••••"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                    minLength={6}
                   />
                 </div>
                 <div className="input-group">
                   <label className="label">Confirm New Password</label>
                   <input
                     type="password"
+                    required
                     className="input"
                     placeholder="••••••••"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    minLength={6}
                   />
                 </div>
                 {passwordStatus.error && <div className="alert alert-danger">{passwordStatus.error}</div>}
                 {passwordStatus.success && <div className="alert alert-success">{passwordStatus.success}</div>}
                 <button type="submit" disabled={passwordStatus.loading} className="btn btn-primary mt-2">
-                  {passwordStatus.loading ? 'Updating...' : 'Change Password'}
+                  {passwordStatus.loading ? 'Updating...' : 'Update Password'}
                 </button>
               </form>
             </div>
 
-            {/* Account Session / Sign Out */}
+            {/* Account Session & Sign Out */}
             <div className="card mt-4">
               <h2 className="title-md flex-row gap-2 mb-2">
                 <User size={18} /> Account Session
               </h2>
-              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Signed in as {session.user.email}
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                Signed in as <strong>{session?.user?.email}</strong>
               </p>
+              <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Role: <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{currentUserProfile?.role || 'Normal User'}</span>
+                {activeClub && <span> • Club: <strong>{activeClub.name}</strong></span>}
+              </div>
               <button onClick={handleSignOut} className="btn btn-secondary" style={{ color: 'var(--color-danger)' }}>
                 <LogOut size={18} /> Sign Out
               </button>
@@ -461,20 +562,34 @@ export default function SettingsView({
           </>
         )}
 
-        {/* ================= ADMIN TAB ================= */}
+        {/* ================= TEAM SETTINGS TAB ================= */}
         {isAdmin && settingsTab === 'admin' && (
           <>
-            {/* Active Team / Season Details & Feature Controls */}
             <div className="card">
-              <h2 className="title-md flex-row gap-2 mb-2">
-                <Edit3 size={18} color="var(--color-primary)" /> Team Profile &amp; Squad Settings
-              </h2>
+              <div className="flex-between mb-2">
+                <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
+                  <Edit3 size={18} color="var(--color-primary)" /> Team Profile &amp; Squad Settings
+                </h2>
+                {showClubManager && (
+                  <button
+                    type="button"
+                    onClick={() => setShowClubModal(true)}
+                    className="btn btn-secondary flex-row gap-1"
+                    style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem' }}
+                  >
+                    <Building2 size={14} /> Manage Clubs
+                  </button>
+                )}
+              </div>
+
               <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Configure the active team profile name and squad formatting rules.
+                Active Club: <strong>{activeClub?.name || 'Tower Hill FC'}</strong>
+                {activeClub?.location && ` (${activeClub.location})`}
               </p>
+
               <form onSubmit={handleUpdateTeamDetails}>
                 <div className="input-group">
-                  <label className="label">Team Name</label>
+                  <label className="label">Team / Sub-team Name</label>
                   <input
                     type="text"
                     className="input"
@@ -498,7 +613,7 @@ export default function SettingsView({
                   <div>
                     <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Hide Positions</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                      Don't require or show positions (e.g. for younger ages)
+                      Don't require or display positions in squad and match breakdowns
                     </div>
                   </div>
                   <button
@@ -532,111 +647,6 @@ export default function SettingsView({
                   </button>
                 </div>
 
-                {/* Feature Switches (Admin Controls) */}
-                <div style={{ marginTop: '1.25rem', marginBottom: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <Sliders size={14} /> Analytics &amp; Feature Switches
-                  </div>
-
-                  {/* Match Dynamics & Milestones Switch */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '0.75rem 1rem',
-                      background: 'var(--color-border-light)',
-                      borderRadius: 'var(--radius-lg)',
-                      marginBottom: '0.6rem'
-                    }}
-                  >
-                    <div style={{ paddingRight: '1rem' }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Match Dynamics &amp; Milestones</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                        Display goal dynamics, opening goal records, distributor honours, and scoring milestone cards
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setMatchDynamicsInput((v) => !v)}
-                      style={{
-                        width: '3rem',
-                        height: '1.75rem',
-                        borderRadius: '999px',
-                        border: 'none',
-                        cursor: 'pointer',
-                        transition: 'background 0.2s',
-                        background: matchDynamicsInput ? 'var(--color-primary)' : 'var(--color-border)',
-                        position: 'relative',
-                        flexShrink: 0
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: '0.2rem',
-                          left: matchDynamicsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
-                          width: '1.35rem',
-                          height: '1.35rem',
-                          background: 'white',
-                          borderRadius: '50%',
-                          transition: 'left 0.2s',
-                          boxShadow: 'var(--shadow-sm)'
-                        }}
-                      />
-                    </button>
-                  </div>
-
-                  {/* Player Efficiency Rating Switch */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '0.75rem 1rem',
-                      background: 'var(--color-border-light)',
-                      borderRadius: 'var(--radius-lg)',
-                      marginBottom: '0.6rem'
-                    }}
-                  >
-                    <div style={{ paddingRight: '1rem' }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Player Efficiency Rating (Eff %)</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                        Display match involvement consistency % in the Squad Breakdown and the Mr. Reliable honour
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setEfficiencyRatingInput((v) => !v)}
-                      style={{
-                        width: '3rem',
-                        height: '1.75rem',
-                        borderRadius: '999px',
-                        border: 'none',
-                        cursor: 'pointer',
-                        transition: 'background 0.2s',
-                        background: efficiencyRatingInput ? 'var(--color-primary)' : 'var(--color-border)',
-                        position: 'relative',
-                        flexShrink: 0
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: '0.2rem',
-                          left: efficiencyRatingInput ? 'calc(100% - 1.35rem)' : '0.2rem',
-                          width: '1.35rem',
-                          height: '1.35rem',
-                          background: 'white',
-                          borderRadius: '50%',
-                          transition: 'left 0.2s',
-                          boxShadow: 'var(--shadow-sm)'
-                        }}
-                      />
-                    </button>
-                  </div>
-                </div>
-
                 {teamStatus.error && <div className="alert alert-danger">{teamStatus.error}</div>}
                 {teamStatus.success && <div className="alert alert-success">{teamStatus.success}</div>}
 
@@ -646,28 +656,29 @@ export default function SettingsView({
               </form>
             </div>
 
-            {/* Multi-Team & Season Switcher */}
+            {/* Teams & Sub-teams Switcher / Creator */}
             <div className="card mt-4">
               <div className="flex-between mb-2">
                 <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
-                  <Shield size={18} color="var(--color-secondary)" /> Your Teams &amp; Seasons
+                  <Shield size={18} color="var(--color-secondary)" /> Teams &amp; Seasons in Club
                 </h2>
                 <button
                   onClick={onAddNewTeam || (() => setShowAddTeamModal(true))}
                   className="btn btn-secondary"
                   style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
                 >
-                  <Plus size={14} /> Add Profile
+                  <Plus size={14} /> Add Team
                 </button>
               </div>
 
               <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Switch active team context or add a new team/season profile.
+                Switch active team context or add a new team profile.
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {allTeams.map((t) => {
                   const isActive = t.id === teamInfo?.id;
+                  const tClub = allClubs.find((c) => c.id === t.club_id);
                   return (
                     <div
                       key={t.id}
@@ -688,7 +699,9 @@ export default function SettingsView({
                         <div style={{ fontWeight: 600, fontSize: '0.95rem', color: isActive ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
                           {t.name}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{t.season}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                          {t.season} {tClub ? `• ${tClub.name}` : ''}
+                        </div>
                       </div>
                       {isActive && (
                         <span className="badge badge-primary flex-row gap-1">
@@ -709,7 +722,7 @@ export default function SettingsView({
                       <input
                         type="text"
                         className="input"
-                        placeholder="e.g. AFC Richmond U11s"
+                        placeholder="e.g. Tower Hill U8s"
                         value={newTeamName}
                         onChange={(e) => setNewTeamName(e.target.value)}
                         required
@@ -726,9 +739,25 @@ export default function SettingsView({
                         required
                       />
                     </div>
+                    {isDev && allClubs.length > 1 && (
+                      <div className="input-group">
+                        <label className="label">Club</label>
+                        <select
+                          className="input"
+                          value={newTeamClubId}
+                          onChange={(e) => setNewTeamClubId(e.target.value)}
+                        >
+                          {allClubs.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} {c.location ? `(${c.location})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     <div className="flex-row gap-2 mt-2">
                       <button type="submit" disabled={addTeamLoading} className="btn btn-primary" style={{ flex: 1 }}>
-                        {addTeamLoading ? 'Saving...' : 'Create Profile'}
+                        {addTeamLoading ? 'Saving...' : 'Create Team'}
                       </button>
                       <button
                         type="button"
@@ -745,7 +774,147 @@ export default function SettingsView({
             </div>
           </>
         )}
+
+        {/* ================= USER MANAGEMENT TAB ================= */}
+        {isAdmin && settingsTab === 'users' && (
+          <UserManagementTab
+            currentUserProfile={currentUserProfile}
+            session={session}
+            allClubs={allClubs}
+            allTeams={allTeams}
+          />
+        )}
+
+        {/* ================= DEV FEATURE SWITCHES TAB ================= */}
+        {showDevFeatures && settingsTab === 'features' && (
+          <div className="card">
+            <h2 className="title-md flex-row gap-2 mb-2">
+              <ToggleLeft size={18} color="var(--color-primary)" /> Dev Admin: Analytics &amp; Feature Switches
+            </h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1.25rem' }}>
+              These switches are globally controlled by Dev Admin and configure advanced analytical modules per team profile.
+            </p>
+
+            <form onSubmit={handleUpdateTeamDetails}>
+              {/* Match Dynamics & Milestones Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.75rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Match Dynamics &amp; Milestones</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Display goal dynamics, opening goal records, distributor honours, and scoring milestone cards
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMatchDynamicsInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: matchDynamicsInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: matchDynamicsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Player Efficiency Rating Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '1rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Player Efficiency Rating (Eff %)</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Display match involvement consistency % in the Squad Breakdown and the Mr. Reliable honour
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEfficiencyRatingInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: efficiencyRatingInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: efficiencyRatingInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {teamStatus.error && <div className="alert alert-danger">{teamStatus.error}</div>}
+              {teamStatus.success && <div className="alert alert-success">{teamStatus.success}</div>}
+
+              <button type="submit" disabled={teamStatus.loading} className="btn btn-primary mt-2">
+                {teamStatus.loading ? 'Updating...' : 'Save Feature Switches'}
+              </button>
+            </form>
+          </div>
+        )}
       </div>
+
+      {/* Dev Admin Club Management Modal */}
+      {showClubModal && (
+        <ClubManagementModal
+          isOpen={showClubModal}
+          onClose={() => setShowClubModal(false)}
+          allClubs={allClubs}
+          allTeams={allTeams}
+          onClubsUpdated={setAllClubs}
+        />
+      )}
     </div>
   );
 }

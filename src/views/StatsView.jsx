@@ -8,6 +8,8 @@ export default function StatsView({
   squad,
   teamInfo,
   allTeams,
+  allClubs = [],
+  currentUserProfile,
   onSelectTeam,
   onAddNewTeam,
   setCurrentView,
@@ -761,6 +763,8 @@ export default function StatsView({
         setCurrentView={setCurrentView}
         teamInfo={teamInfo}
         allTeams={allTeams}
+        allClubs={allClubs}
+        currentUserProfile={currentUserProfile}
         onSelectTeam={onSelectTeam}
         onAddNewTeam={onAddNewTeam}
       />
