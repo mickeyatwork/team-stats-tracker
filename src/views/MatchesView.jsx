@@ -237,9 +237,6 @@ export default function MatchesView({
     <div className="app-container">
       <TopNav
         title={teamInfo.name}
-        rightIcon={
-          <span className="badge badge-primary">{teamInfo.season}</span>
-        }
         showTabs={true}
         currentView="matches"
         setCurrentView={setCurrentView}

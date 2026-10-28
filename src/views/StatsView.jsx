@@ -1012,7 +1012,7 @@ export default function StatsView({
                         <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 700 : 400, color: p.assists > 0 ? 'var(--color-secondary-dark)' : 'inherit' }}>
                           {p.assists}
                         </td>
-                        <td style={{ textAlign: 'center', fontWeight: 800, color: formSortField === 'ga' ? 'var(--color-primary-dark)' : 'inherit' }}>
+                        <td style={{ textAlign: 'center', fontWeight: 800, color: formSortField === 'ga' ? 'var(--color-stat-involvements)' : 'inherit' }}>
                           {p.ga}
                         </td>
                         <td style={{ textAlign: 'center' }}>
@@ -1041,12 +1041,12 @@ export default function StatsView({
                                       </span>
                                     )}
                                     {mc.cleanSheet && (
-                                      <span className="form-match-pill has-gk" title={`vs ${mc.opponent}: Clean Sheet`}>
-                                        🧤<span className="pill-count">CS</span>
+                                      <span className="form-match-pill has-cs" title={`vs ${mc.opponent}: Clean Sheet`}>
+                                        🛡️<span className="pill-count">CS</span>
                                       </span>
                                     )}
-                                    {!mc.cleanSheet && mc.saves > 0 && (
-                                      <span className="form-match-pill has-gk" title={`vs ${mc.opponent}: ${mc.saves} saves`}>
+                                    {mc.saves > 0 && (
+                                      <span className="form-match-pill has-saves" title={`vs ${mc.opponent}: ${mc.saves} ${mc.saves === 1 ? 'save' : 'saves'}`}>
                                         🧤<span className="pill-count">{mc.saves}</span>
                                       </span>
                                     )}
@@ -1144,7 +1144,7 @@ export default function StatsView({
 
             {/* Top Goal Involvements */}
             <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('involvements')} style={{ cursor: 'pointer', position: 'relative' }}>
-              <div className="leaderboard-box-title" style={{ color: 'var(--color-primary-dark)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="leaderboard-box-title involvements" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span><Zap size={16} /> Goal Involvements</span>
                 <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
               </div>
@@ -1157,7 +1157,7 @@ export default function StatsView({
                     <div key={p.id} className="leaderboard-row">
                       <span className="rank">{idx + 1}.</span>
                       <span className="p-name">{p.name}</span>
-                      <span className="p-score" style={{ color: 'var(--color-primary-dark)', background: 'var(--color-primary-light)' }}>
+                      <span className="p-score involvements">
                         {p.goals + p.assists}
                       </span>
                     </div>
@@ -1188,7 +1188,7 @@ export default function StatsView({
 
             {/* Top Clean Sheets */}
             <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('cleanSheets')} style={{ cursor: 'pointer', position: 'relative' }}>
-              <div className="leaderboard-box-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#10b981' }}>
+              <div className="leaderboard-box-title cleanSheets" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span><Shield size={16} /> Top Clean Sheets</span>
                 <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
               </div>
@@ -1201,7 +1201,7 @@ export default function StatsView({
                     <div key={p.id} className="leaderboard-row">
                       <span className="rank">{idx + 1}.</span>
                       <span className="p-name">{p.name}</span>
-                      <span className="p-score" style={{ color: '#059669', background: '#d1fae5' }}>{p.cleanSheets}</span>
+                      <span className="p-score cleanSheets">{p.cleanSheets}</span>
                     </div>
                   ))
               )}
@@ -1279,7 +1279,7 @@ export default function StatsView({
                   <div className="dynamics-stat-value">
                     {goalDynamics.scoredFirstMatches > 0 ? (
                       <>
-                        <span style={{ color: 'var(--color-primary-dark)', fontWeight: 800 }}>
+                        <span style={{ color: 'var(--color-success-dark)', fontWeight: 800 }}>
                           {goalDynamics.scoredFirstWinRate}%
                         </span>
                         <span className="dynamics-stat-sub">Win Rate when 1-0 up</span>
@@ -1352,7 +1352,7 @@ export default function StatsView({
                     <div className="dynamics-stat-label">"Mr. Reliable" (Efficiency)</div>
                     {goalDynamics.reliableLeaders.length > 0 ? (
                       <>
-                        <div className="dynamics-stat-value" style={{ color: 'var(--color-primary-dark)' }}>
+                        <div className="dynamics-stat-value" style={{ color: 'var(--color-stat-involvements)' }}>
                           {goalDynamics.reliableLeaders.map((p) => p.name).join(', ')}
                         </div>
                         <div className="dynamics-stat-footnote">
@@ -1440,7 +1440,7 @@ export default function StatsView({
                     <div className="milestone-title">Match Scoring Record</div>
                     {milestones.maxSingleGameGoals > 0 ? (
                       <>
-                        <div className="milestone-value" style={{ color: 'var(--color-primary-dark)' }}>
+                        <div className="milestone-value" style={{ color: 'var(--color-stat-goals)' }}>
                           {milestones.maxSingleGameGoals} {milestones.maxSingleGameGoals === 1 ? 'Goal' : 'Goals'}
                         </div>
                         <div className="milestone-desc">
@@ -1559,17 +1559,17 @@ export default function StatsView({
                         </td>
                       )}
                       <td style={{ textAlign: 'center' }}>{p.appearances}</td>
-                      <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? '#ca5d03' : 'inherit' }}>
+                      <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? 'var(--color-stat-goals)' : 'inherit' }}>
                         {goalsDisplay}
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: hasAssists ? 700 : 400, color: hasAssists ? 'var(--color-secondary-dark)' : 'inherit' }}>
                         {assistsDisplay}
                       </td>
-                      <td style={{ textAlign: 'center', fontWeight: 800, color: sortField === 'ga' ? 'var(--color-primary-dark)' : 'inherit' }}>
+                      <td style={{ textAlign: 'center', fontWeight: 800, color: sortField === 'ga' ? 'var(--color-stat-involvements)' : 'inherit' }}>
                         {gaDisplay}
                       </td>
                       {showEfficiencyRating && (
-                        <td style={{ textAlign: 'center', fontWeight: p.consistencyRate > 0 ? 600 : 400, color: p.consistencyRate >= 50 ? 'var(--color-primary-dark)' : 'inherit' }}>
+                        <td style={{ textAlign: 'center', fontWeight: p.consistencyRate > 0 ? 600 : 400, color: p.consistencyRate >= 50 ? 'var(--color-stat-involvements)' : 'inherit' }}>
                           {p.appearances > 0 ? `${p.consistencyRate}%` : '-'}
                           {p.appearances > 0 && (
                             <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
@@ -1578,10 +1578,10 @@ export default function StatsView({
                           )}
                         </td>
                       )}
-                      <td style={{ textAlign: 'center', fontWeight: hasSaves ? 700 : 400, color: hasSaves ? '#909c2a' : 'inherit' }}>
+                      <td style={{ textAlign: 'center', fontWeight: hasSaves ? 700 : 400, color: hasSaves ? 'var(--color-stat-saves)' : 'inherit' }}>
                         {savesDisplay}
                       </td>
-                      <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? '#10b981' : 'inherit' }}>
+                      <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? 'var(--color-stat-clean-sheets)' : 'inherit' }}>
                         {p.cleanSheets}
                       </td>
                     </tr>
@@ -1650,11 +1650,11 @@ export default function StatsView({
               <X size={20} />
             </button>
             <h3 className="title-md mb-4 flex-row gap-2" style={{ textTransform: 'capitalize', paddingRight: '2rem' }}>
-              {expandedLeaderboard === 'goals' && <><Target size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Goals</span></>}
-              {expandedLeaderboard === 'assists' && <><Award size={20} color="var(--color-secondary-dark)" /> <span style={{ color: 'var(--color-secondary-dark)' }}>Top Assists</span></>}
-              {expandedLeaderboard === 'involvements' && <><Zap size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Goal Involvements</span></>}
-              {expandedLeaderboard === 'saves' && <><Shield size={20} color="#b45309" /> <span style={{ color: '#b45309' }}>Top Saves</span></>}
-              {expandedLeaderboard === 'cleanSheets' && <><Shield size={20} color="#10b981" /> <span style={{ color: '#10b981' }}>Top Clean Sheets</span></>}
+              {expandedLeaderboard === 'goals' && <><Target size={20} color="var(--color-stat-goals)" /> <span style={{ color: 'var(--color-stat-goals)' }}>Top Goals</span></>}
+              {expandedLeaderboard === 'assists' && <><Award size={20} color="var(--color-stat-assists)" /> <span style={{ color: 'var(--color-stat-assists)' }}>Top Assists</span></>}
+              {expandedLeaderboard === 'involvements' && <><Zap size={20} color="var(--color-stat-involvements)" /> <span style={{ color: 'var(--color-stat-involvements)' }}>Goal Involvements</span></>}
+              {expandedLeaderboard === 'saves' && <><Shield size={20} color="var(--color-stat-saves)" /> <span style={{ color: 'var(--color-stat-saves)' }}>Top Saves</span></>}
+              {expandedLeaderboard === 'cleanSheets' && <><Shield size={20} color="var(--color-stat-clean-sheets)" /> <span style={{ color: 'var(--color-stat-clean-sheets)' }}>Top Clean Sheets</span></>}
               {expandedLeaderboard === 'combinations' && <><Heart size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Combinations</span></>}
             </h3>
             
@@ -1701,9 +1701,9 @@ export default function StatsView({
                 let color = '';
                 if (expandedLeaderboard === 'goals') { list = statsSummary.fullScorers.filter(p => p.goals > 0); metric = 'goals'; color = 'goals'; }
                 else if (expandedLeaderboard === 'assists') { list = statsSummary.fullAssists.filter(p => p.assists > 0); metric = 'assists'; color = 'assists'; }
-                else if (expandedLeaderboard === 'involvements') { list = statsSummary.fullInvolvements.filter(p => (p.goals + p.assists) > 0); metric = 'involvements'; }
+                else if (expandedLeaderboard === 'involvements') { list = statsSummary.fullInvolvements.filter(p => (p.goals + p.assists) > 0); metric = 'involvements'; color = 'involvements'; }
                 else if (expandedLeaderboard === 'saves') { list = statsSummary.fullSaves.filter(p => p.saves > 0); metric = 'saves'; color = 'saves'; }
-                else if (expandedLeaderboard === 'cleanSheets') { list = statsSummary.fullCleanSheets.filter(p => p.cleanSheets > 0); metric = 'cleanSheets'; color = ''; }
+                else if (expandedLeaderboard === 'cleanSheets') { list = statsSummary.fullCleanSheets.filter(p => p.cleanSheets > 0); metric = 'cleanSheets'; color = 'cleanSheets'; }
                 
                 if (list.length === 0) return <div className="empty-sub">No stats recorded yet</div>;
                 
@@ -1711,7 +1711,7 @@ export default function StatsView({
                   <div key={p.id} className="leaderboard-row" style={{ padding: '0.75rem', borderBottom: '1px solid var(--color-border-light)', borderRadius: 0, marginBottom: 0 }}>
                     <span className="rank">{idx + 1}.</span>
                     <span className="p-name">{p.name}</span>
-                    <span className={`p-score ${color}`} style={metric === 'involvements' ? { color: 'var(--color-primary-dark)', background: 'var(--color-primary-light)' } : metric === 'cleanSheets' ? { color: '#059669', background: '#d1fae5' } : {}}>
+                    <span className={`p-score ${color}`}>
                       {metric === 'goals' ? p.goals : metric === 'assists' ? p.assists : metric === 'saves' ? p.saves : metric === 'cleanSheets' ? p.cleanSheets : (p.goals + p.assists)}
                     </span>
                   </div>

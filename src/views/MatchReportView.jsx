@@ -916,7 +916,7 @@ export default function MatchReportView({
                       {!teamInfo.hide_positions && <td><span className="badge-pos">{p.position}</span></td>}
                       <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 600 : 400 }}>{p.goals}</td>
                       <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 600 : 400 }}>{p.assists}</td>
-                      <td style={{ textAlign: 'center', fontWeight: p.goals + p.assists > 0 ? 700 : 400, color: p.goals + p.assists > 0 ? 'var(--color-primary-dark)' : 'inherit' }}>
+                      <td style={{ textAlign: 'center', fontWeight: p.goals + p.assists > 0 ? 700 : 400, color: p.goals + p.assists > 0 ? 'var(--color-stat-involvements)' : 'inherit' }}>
                         {p.goals + p.assists}
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: p.saves > 0 ? 600 : 400 }}>{p.saves}</td>
