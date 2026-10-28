@@ -162,6 +162,7 @@ export default function TournamentView({
 
       const dbMatch = {
         user_id: session?.user?.id,
+        team_id: teamInfo?.id || null,
         date: new Date(matchDate).toISOString(),
         opponent: opponent.trim(),
         competition: 'Tournament',
