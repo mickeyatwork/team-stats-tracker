@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
-import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X } from 'lucide-react';
+import { useState, useMemo, Fragment } from 'react';
+import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Sparkles, Clock } from 'lucide-react';
 import TopNav from '../components/TopNav';
+import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
 
 export default function StatsView({
   matches,
@@ -12,10 +13,21 @@ export default function StatsView({
   setCurrentView,
   goalEvents = []
 }) {
+  // Feature switches (Admin configurable per team)
+  const showMatchDynamics = isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS);
+  const showEfficiencyRating = isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING);
+
   // Sort state for squad breakdown table
   const [sortField, setSortField] = useState('ga'); // default sort by G+A
   const [sortDirection, setSortDirection] = useState('desc'); // default descending
+  const [tableMode, setTableMode] = useState('totals'); // 'totals' | 'per_game'
   
+  // Recent Form state (window: 3 or 5 games)
+  const [formWindow, setFormWindow] = useState(3);
+  const [formSortField, setFormSortField] = useState('ga');
+  const [formSortDirection, setFormSortDirection] = useState('desc');
+  const [isFormExpanded, setIsFormExpanded] = useState(false); // Collapsed to top 5 by default
+
   // State for expanded leaderboard modal
   const [expandedLeaderboard, setExpandedLeaderboard] = useState(null);
 
@@ -90,7 +102,8 @@ export default function StatsView({
         goals: 0,
         assists: 0,
         saves: 0,
-        cleanSheets: 0
+        cleanSheets: 0,
+        gamesContributed: 0
       };
     });
 
@@ -118,7 +131,8 @@ export default function StatsView({
               goals: 0,
               assists: 0,
               saves: 0,
-              cleanSheets: 0
+              cleanSheets: 0,
+              gamesContributed: 0
             };
           }
           const pStat = m.stats[pid];
@@ -126,6 +140,10 @@ export default function StatsView({
           playerAgg[pid].goals += pStat.goals || 0;
           playerAgg[pid].assists += pStat.assists || 0;
           playerAgg[pid].saves += pStat.saves || 0;
+
+          if ((pStat.goals || 0) > 0 || (pStat.assists || 0) > 0) {
+            playerAgg[pid].gamesContributed += 1;
+          }
           
           if (pStat.is_goalkeeper && m.opponent_goals === 0 && !m.hide_score) {
             playerAgg[pid].cleanSheets += 1;
@@ -134,7 +152,21 @@ export default function StatsView({
       }
     });
 
-    const playerList = Object.values(playerAgg);
+    const playerList = Object.values(playerAgg).map((p) => {
+      const gPerGame = p.appearances > 0 ? p.goals / p.appearances : 0;
+      const aPerGame = p.appearances > 0 ? p.assists / p.appearances : 0;
+      const gaPerGame = p.appearances > 0 ? (p.goals + p.assists) / p.appearances : 0;
+      const savesPerGame = p.appearances > 0 ? p.saves / p.appearances : 0;
+      const consistencyRate = p.appearances > 0 ? Math.round((p.gamesContributed / p.appearances) * 100) : 0;
+      return {
+        ...p,
+        gPerGame,
+        aPerGame,
+        gaPerGame,
+        savesPerGame,
+        consistencyRate
+      };
+    });
 
     const fullScorers = [...playerList].sort((a, b) => b.goals - a.goals || b.appearances - a.appearances);
     const topScorers = fullScorers.slice(0, 3);
@@ -207,7 +239,7 @@ export default function StatsView({
     return { fullCombinations: full, topCombinations: full.slice(0, 5) };
   }, [goalEvents, filteredMatches, squad]);
 
-  // Sort player list dynamically based on sortField and sortDirection
+  // Sort player list dynamically based on sortField, sortDirection, and tableMode
   const sortedPlayers = useMemo(() => {
     return [...statsSummary.playerList].sort((a, b) => {
       let valA, valB;
@@ -220,6 +252,455 @@ export default function StatsView({
           valA = a.position;
           valB = b.position;
           return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case 'appearances':
+          valA = a.appearances;
+          valB = b.appearances;
+          break;
+        case 'goals':
+          valA = tableMode === 'per_game' ? a.gPerGame : a.goals;
+          valB = tableMode === 'per_game' ? b.gPerGame : b.goals;
+          break;
+        case 'assists':
+          valA = tableMode === 'per_game' ? a.aPerGame : a.assists;
+          valB = tableMode === 'per_game' ? b.aPerGame : b.assists;
+          break;
+        case 'saves':
+          valA = tableMode === 'per_game' ? a.savesPerGame : a.saves;
+          valB = tableMode === 'per_game' ? b.savesPerGame : b.saves;
+          break;
+        case 'cleanSheets':
+          valA = a.cleanSheets;
+          valB = b.cleanSheets;
+          break;
+        case 'efficiency':
+          valA = a.consistencyRate;
+          valB = b.consistencyRate;
+          if (valA !== valB) {
+            return sortDirection === 'asc' ? valA - valB : valB - valA;
+          }
+          if (a.gamesContributed !== b.gamesContributed) {
+            return sortDirection === 'asc' ? a.gamesContributed - b.gamesContributed : b.gamesContributed - a.gamesContributed;
+          }
+          const gaA = a.goals + a.assists;
+          const gaB = b.goals + b.assists;
+          if (gaA !== gaB) {
+            return sortDirection === 'asc' ? gaA - gaB : gaB - gaA;
+          }
+          break;
+        case 'ga':
+        default:
+          valA = tableMode === 'per_game' ? a.gaPerGame : a.goals + a.assists;
+          valB = tableMode === 'per_game' ? b.gaPerGame : b.goals + b.assists;
+          break;
+      }
+      if (valA !== valB) {
+        return sortDirection === 'asc' ? valA - valB : valB - valA;
+      }
+      // Secondary sort tiebreaker by name
+      return a.name.localeCompare(b.name);
+    });
+  }, [statsSummary.playerList, sortField, sortDirection, tableMode]);
+
+  const renderSortIndicator = (field) => {
+    if (sortField !== field) {
+      return <ArrowUpDown size={12} style={{ opacity: 0.35, marginLeft: '0.2rem' }} />;
+    }
+    return sortDirection === 'asc' ? (
+      <ChevronUp size={14} style={{ color: 'var(--color-primary-dark)', marginLeft: '0.2rem' }} />
+    ) : (
+      <ChevronDown size={14} style={{ color: 'var(--color-primary-dark)', marginLeft: '0.2rem' }} />
+    );
+  };
+
+  // ==========================================
+  // Scoring Milestones & In-Game Dynamics
+  // ==========================================
+  const milestones = useMemo(() => {
+    const hatTricksMap = {};
+    const bracesMap = {};
+    let maxSingleGameGoals = 0;
+    let singleGamePerformances = [];
+
+    filteredMatches.forEach((m) => {
+      if (!m.stats) return;
+      Object.entries(m.stats).forEach(([pid, stat]) => {
+        const g = stat.goals || 0;
+        if (g >= 3) {
+          hatTricksMap[pid] = (hatTricksMap[pid] || 0) + 1;
+        } else if (g === 2) {
+          bracesMap[pid] = (bracesMap[pid] || 0) + 1;
+        }
+        if (g > maxSingleGameGoals) {
+          maxSingleGameGoals = g;
+          singleGamePerformances = [{
+            playerId: pid,
+            opponent: m.opponent || 'Opponent',
+            date: m.date
+          }];
+        } else if (g > 0 && g === maxSingleGameGoals) {
+          singleGamePerformances.push({
+            playerId: pid,
+            opponent: m.opponent || 'Opponent',
+            date: m.date
+          });
+        }
+      });
+    });
+
+    const hatTrickPlayers = Object.entries(hatTricksMap)
+      .map(([pid, count]) => {
+        const p = squad.find((s) => s.id === pid);
+        return { id: pid, name: p ? p.name : 'Unknown', count };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    const bracePlayers = Object.entries(bracesMap)
+      .map(([pid, count]) => {
+        const p = squad.find((s) => s.id === pid);
+        return { id: pid, name: p ? p.name : 'Unknown', count };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    const totalHatTricks = Object.values(hatTricksMap).reduce((acc, c) => acc + c, 0);
+    const totalBraces = Object.values(bracesMap).reduce((acc, c) => acc + c, 0);
+
+    const recordPerformances = singleGamePerformances.map((perf) => {
+      const p = squad.find((s) => s.id === perf.playerId);
+      return {
+        playerName: p ? p.name : 'Unknown',
+        opponent: perf.opponent,
+        date: perf.date
+      };
+    });
+
+    return {
+      totalHatTricks,
+      totalBraces,
+      hatTrickPlayers,
+      bracePlayers,
+      maxSingleGameGoals,
+      recordPerformances
+    };
+  }, [filteredMatches, squad]);
+
+  const goalDynamics = useMemo(() => {
+    const matchIds = new Set(filteredMatches.map((m) => m.id));
+    const relevantEvents = goalEvents.filter((e) => matchIds.has(e.match_id));
+
+    const eventsByMatch = {};
+    relevantEvents.forEach((e) => {
+      if (!eventsByMatch[e.match_id]) eventsByMatch[e.match_id] = [];
+      eventsByMatch[e.match_id].push(e);
+    });
+
+    let scoredFirstMatches = 0;
+    let scoredFirstWins = 0;
+    let scoredFirstDraws = 0;
+    let scoredFirstLosses = 0;
+    const openingScorers = {};
+    const soloScorers = {};
+    const distributorSets = {};
+
+    let totalTeamGoalsWithEvents = 0;
+    let assistedGoalsCount = 0;
+
+    Object.entries(eventsByMatch).forEach(([mId, evts]) => {
+      const match = filteredMatches.find((m) => m.id === mId);
+      if (!match || match.hide_score) return;
+
+      const sortedEvts = [...evts].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+      const firstGoal = sortedEvts[0];
+      if (firstGoal) {
+        const isTeam = firstGoal.scorer_id !== 'OPPONENT';
+        if (isTeam) {
+          scoredFirstMatches++;
+          if (match.team_goals > match.opponent_goals) scoredFirstWins++;
+          else if (match.team_goals === match.opponent_goals) scoredFirstDraws++;
+          else scoredFirstLosses++;
+
+          if (firstGoal.scorer_id && firstGoal.scorer_id !== 'UNASSIGNED') {
+            openingScorers[firstGoal.scorer_id] = (openingScorers[firstGoal.scorer_id] || 0) + 1;
+          }
+        }
+      }
+
+      sortedEvts.forEach((e) => {
+        if (e.scorer_id !== 'OPPONENT') {
+          totalTeamGoalsWithEvents++;
+          if (e.assister_id) {
+            assistedGoalsCount++;
+            if (e.scorer_id && e.scorer_id !== 'UNASSIGNED') {
+              if (!distributorSets[e.assister_id]) distributorSets[e.assister_id] = new Set();
+              distributorSets[e.assister_id].add(e.scorer_id);
+            }
+          } else {
+            // Solo / unassisted goal
+            if (e.scorer_id && e.scorer_id !== 'UNASSIGNED') {
+              soloScorers[e.scorer_id] = (soloScorers[e.scorer_id] || 0) + 1;
+            }
+          }
+        }
+      });
+    });
+
+    const scoredFirstWinRate = scoredFirstMatches > 0 
+      ? Math.round((scoredFirstWins / scoredFirstMatches) * 100) 
+      : 0;
+
+    const assistedPercent = totalTeamGoalsWithEvents > 0 
+      ? Math.round((assistedGoalsCount / totalTeamGoalsWithEvents) * 100) 
+      : 0;
+
+    const topIcebreakers = Object.entries(openingScorers)
+      .map(([pid, count]) => {
+        const p = squad.find((s) => s.id === pid);
+        return { id: pid, name: p ? p.name : 'Unknown', count };
+      })
+      .sort((a, b) => b.count - a.count);
+    const topIcebreakerCount = topIcebreakers.length > 0 ? topIcebreakers[0].count : 0;
+    const icebreakerLeaders = topIcebreakers.filter((p) => p.count === topIcebreakerCount);
+
+    const topSoloScorers = Object.entries(soloScorers)
+      .map(([pid, count]) => {
+        const p = squad.find((s) => s.id === pid);
+        return { id: pid, name: p ? p.name : 'Unknown', count };
+      })
+      .sort((a, b) => b.count - a.count);
+    const topSoloCount = topSoloScorers.length > 0 ? topSoloScorers[0].count : 0;
+    const soloLeaders = topSoloScorers.filter((p) => p.count === topSoloCount);
+
+    const topDistributors = Object.entries(distributorSets)
+      .map(([pid, set]) => {
+        const p = squad.find((s) => s.id === pid);
+        return { id: pid, name: p ? p.name : 'Unknown', count: set.size };
+      })
+      .sort((a, b) => b.count - a.count);
+    const topDistCount = topDistributors.length > 0 ? topDistributors[0].count : 0;
+    const distributorLeaders = topDistributors.filter((p) => p.count === topDistCount);
+
+    // Efficiency / Consistency leader ("Mr. Reliable")
+    // Include all players who share the top consistency rate!
+    const minApps = Math.min(2, Math.max(1, filteredMatches.length));
+    const eligibleReliable = statsSummary.playerList
+      .filter((p) => p.appearances >= minApps && p.gamesContributed > 0)
+      .sort((a, b) => b.consistencyRate - a.consistencyRate || b.gamesContributed - a.gamesContributed || (b.goals + b.assists) - (a.goals + a.assists));
+
+    const reliablePool = eligibleReliable.length > 0
+      ? eligibleReliable
+      : statsSummary.playerList.filter((p) => p.gamesContributed > 0).sort((a, b) => b.consistencyRate - a.consistencyRate || (b.goals + b.assists) - (a.goals + a.assists));
+
+    const topConsistencyRate = reliablePool.length > 0 ? reliablePool[0].consistencyRate : 0;
+    const reliableLeaders = reliablePool.filter((p) => p.consistencyRate === topConsistencyRate);
+
+    return {
+      scoredFirstMatches,
+      scoredFirstWins,
+      scoredFirstDraws,
+      scoredFirstLosses,
+      scoredFirstWinRate,
+      totalTeamGoalsWithEvents,
+      assistedGoalsCount,
+      assistedPercent,
+      topIcebreakers,
+      icebreakerLeaders,
+      topSoloScorers,
+      soloLeaders,
+      topDistributors,
+      distributorLeaders,
+      reliableLeaders
+    };
+  }, [filteredMatches, goalEvents, squad, statsSummary.playerList]);
+
+  // ==========================================
+  // Recent Form Calculation
+  // ==========================================
+  const recentEligibleMatches = useMemo(() => {
+    return [...filteredMatches]
+      .filter((m) => m.team_goals !== undefined && m.opponent_goals !== undefined)
+      .sort((a, b) => {
+        const dateDiff = new Date(b.date) - new Date(a.date);
+        if (dateDiff !== 0) return dateDiff;
+        if (b.created_at && a.created_at) {
+          return new Date(b.created_at) - new Date(a.created_at);
+        }
+        return (b.id || 0) - (a.id || 0);
+      });
+  }, [filteredMatches]);
+
+  const availableMatchCount = recentEligibleMatches.length;
+  const effectiveWindow = Math.min(formWindow, availableMatchCount);
+  const formMatches = useMemo(() => {
+    return recentEligibleMatches.slice(0, effectiveWindow);
+  }, [recentEligibleMatches, effectiveWindow]);
+
+  const teamFormStats = useMemo(() => {
+    if (formMatches.length === 0) {
+      return { matches: [], wins: 0, draws: 0, losses: 0, points: 0, maxPoints: 0, goalsFor: 0, goalsAgainst: 0, cleanSheets: 0 };
+    }
+    let wins = 0;
+    let draws = 0;
+    let losses = 0;
+    let goalsFor = 0;
+    let goalsAgainst = 0;
+    let cleanSheets = 0;
+
+    const matchesList = formMatches.map((m) => {
+      const gf = m.team_goals || 0;
+      const ga = m.opponent_goals || 0;
+      goalsFor += gf;
+      goalsAgainst += ga;
+      let result = 'D';
+      if (!m.hide_score) {
+        if (gf > ga) {
+          result = 'W';
+          wins++;
+        } else if (gf === ga) {
+          result = 'D';
+          draws++;
+        } else {
+          result = 'L';
+          losses++;
+        }
+        if (ga === 0) cleanSheets++;
+      }
+      return {
+        id: m.id,
+        date: m.date,
+        opponent: m.opponent || 'Opponent',
+        team_goals: gf,
+        opponent_goals: ga,
+        result,
+        hide_score: m.hide_score
+      };
+    });
+
+    const points = (wins * 3) + draws;
+    const maxPoints = formMatches.length * 3;
+
+    return {
+      matches: matchesList,
+      wins,
+      draws,
+      losses,
+      points,
+      maxPoints,
+      goalsFor,
+      goalsAgainst,
+      cleanSheets
+    };
+  }, [formMatches]);
+
+  const playerFormData = useMemo(() => {
+    if (formMatches.length === 0) return [];
+
+    const playerAgg = {};
+    squad.forEach((p) => {
+      playerAgg[p.id] = {
+        id: p.id,
+        name: p.name,
+        position: p.position,
+        appearances: 0,
+        goals: 0,
+        assists: 0,
+        saves: 0,
+        cleanSheets: 0,
+        matchContributions: []
+      };
+    });
+
+    formMatches.forEach((m) => {
+      const matchStats = m.stats || {};
+      Object.keys(matchStats).forEach((pid) => {
+        if (!playerAgg[pid]) {
+          playerAgg[pid] = {
+            id: pid,
+            name: 'Unknown Player',
+            position: 'FW',
+            appearances: 0,
+            goals: 0,
+            assists: 0,
+            saves: 0,
+            cleanSheets: 0,
+            matchContributions: []
+          };
+        }
+      });
+
+      Object.keys(playerAgg).forEach((pid) => {
+        const pStat = matchStats[pid];
+        if (pStat) {
+          const g = pStat.goals || 0;
+          const a = pStat.assists || 0;
+          const s = pStat.saves || 0;
+          const isGk = !!pStat.is_goalkeeper;
+          const cs = isGk && m.opponent_goals === 0 && !m.hide_score ? 1 : 0;
+
+          playerAgg[pid].appearances += 1;
+          playerAgg[pid].goals += g;
+          playerAgg[pid].assists += a;
+          playerAgg[pid].saves += s;
+          playerAgg[pid].cleanSheets += cs;
+
+          playerAgg[pid].matchContributions.push({
+            matchId: m.id,
+            opponent: m.opponent || 'Opponent',
+            played: true,
+            goals: g,
+            assists: a,
+            saves: s,
+            isGoalkeeper: isGk,
+            cleanSheet: cs === 1
+          });
+        } else {
+          playerAgg[pid].matchContributions.push({
+            matchId: m.id,
+            opponent: m.opponent || 'Opponent',
+            played: false,
+            goals: 0,
+            assists: 0,
+            saves: 0,
+            isGoalkeeper: false,
+            cleanSheet: false
+          });
+        }
+      });
+    });
+
+    const activePlayers = Object.values(playerAgg).filter((p) => p.appearances > 0);
+
+    return activePlayers.map((p) => ({
+      ...p,
+      ga: p.goals + p.assists
+    }));
+  }, [formMatches, squad]);
+
+  const maxRecentGA = useMemo(() => {
+    if (playerFormData.length === 0) return 0;
+    return Math.max(...playerFormData.map((p) => p.ga));
+  }, [playerFormData]);
+
+  const handleFormSort = (field) => {
+    if (formSortField === field) {
+      setFormSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setFormSortField(field);
+      setFormSortDirection(field === 'name' || field === 'position' ? 'asc' : 'desc');
+    }
+  };
+
+  const sortedPlayerForm = useMemo(() => {
+    return [...playerFormData].sort((a, b) => {
+      let valA, valB;
+      switch (formSortField) {
+        case 'name':
+          valA = a.name.toLowerCase();
+          valB = b.name.toLowerCase();
+          return formSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case 'position':
+          valA = a.position;
+          valB = b.position;
+          return formSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
         case 'appearances':
           valA = a.appearances;
           valB = b.appearances;
@@ -242,23 +723,29 @@ export default function StatsView({
           break;
         case 'ga':
         default:
-          valA = a.goals + a.assists;
-          valB = b.goals + b.assists;
+          valA = a.ga;
+          valB = b.ga;
           break;
       }
       if (valA !== valB) {
-        return sortDirection === 'asc' ? valA - valB : valB - valA;
+        return formSortDirection === 'asc' ? valA - valB : valB - valA;
       }
-      // Secondary sort tiebreaker by name
+      if (b.goals !== a.goals) return b.goals - a.goals;
+      if (b.assists !== a.assists) return b.assists - a.assists;
       return a.name.localeCompare(b.name);
     });
-  }, [statsSummary.playerList, sortField, sortDirection]);
+  }, [playerFormData, formSortField, formSortDirection]);
 
-  const renderSortIndicator = (field) => {
-    if (sortField !== field) {
+  // Limit to top 5 performers unless expanded by the user
+  const displayedPlayerForm = useMemo(() => {
+    return isFormExpanded ? sortedPlayerForm : sortedPlayerForm.slice(0, 5);
+  }, [isFormExpanded, sortedPlayerForm]);
+
+  const renderFormSortIndicator = (field) => {
+    if (formSortField !== field) {
       return <ArrowUpDown size={12} style={{ opacity: 0.35, marginLeft: '0.2rem' }} />;
     }
-    return sortDirection === 'asc' ? (
+    return formSortDirection === 'asc' ? (
       <ChevronUp size={14} style={{ color: 'var(--color-primary-dark)', marginLeft: '0.2rem' }} />
     ) : (
       <ChevronDown size={14} style={{ color: 'var(--color-primary-dark)', marginLeft: '0.2rem' }} />
@@ -368,6 +855,243 @@ export default function StatsView({
             <div className="stat-card-subtitle">Conceded: {statsSummary.goalsAgainst}</div>
           </div>
         </div>
+
+        {/* Recent Form Section */}
+        {availableMatchCount > 0 && (
+          <div className="card mt-4 form-card">
+            <div className="form-card-header">
+              <div className="flex-row gap-2" style={{ alignItems: 'center' }}>
+                <TrendingUp size={20} color="var(--color-primary-dark)" />
+                <h2 className="title-md" style={{ margin: 0 }}>
+                  Recent Form
+                </h2>
+                {sortedPlayerForm.length > 5 && (
+                  <span className="badge-form-count">
+                    {isFormExpanded ? `All ${sortedPlayerForm.length}` : `Top 5 of ${sortedPlayerForm.length}`}
+                  </span>
+                )}
+              </div>
+
+              {/* Window Switcher: Last 3 or Last 5 */}
+              <div className="form-window-toggle">
+                <button
+                  type="button"
+                  className={`btn-form-window ${formWindow === 3 ? 'active' : ''}`}
+                  onClick={() => setFormWindow(3)}
+                >
+                  Last 3
+                </button>
+                <button
+                  type="button"
+                  className={`btn-form-window ${formWindow === 5 ? 'active' : ''}`}
+                  onClick={() => setFormWindow(5)}
+                >
+                  Last 5
+                </button>
+              </div>
+            </div>
+
+            {/* Team Form Strip */}
+            <div className="team-form-strip">
+              <div className="team-form-matches">
+                {teamFormStats.matches.map((m) => {
+                  const badgeClass = m.result === 'W' ? 'win' : m.result === 'D' ? 'draw' : 'loss';
+                  const dateStr = m.date
+                    ? new Date(m.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                    : '';
+                  return (
+                    <div
+                      key={m.id}
+                      className={`form-match-badge ${badgeClass}`}
+                      title={`${m.opponent} (${dateStr}): ${m.team_goals}-${m.opponent_goals}`}
+                    >
+                      <div className="form-match-res-circle">{m.result}</div>
+                      <div className="form-match-info">
+                        <span className="form-match-score">
+                          {m.hide_score ? 'Played' : `${m.team_goals}-${m.opponent_goals}`}
+                        </span>
+                        <span className="form-match-opp" title={m.opponent}>vs {m.opponent}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="team-form-summary">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="team-form-pts">
+                    {teamFormStats.points}/{teamFormStats.maxPoints} pts
+                  </span>
+                  <span>•</span>
+                  <span>
+                    {teamFormStats.wins}W {teamFormStats.draws}D {teamFormStats.losses}L
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span>
+                    {teamFormStats.goalsFor} GF · {teamFormStats.goalsAgainst} GA
+                  </span>
+                  {availableMatchCount < formWindow && (
+                    <span style={{ fontStyle: 'italic', opacity: 0.8 }}>
+                      (All {availableMatchCount} games)
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Player Recent Form Table */}
+            <div style={{ overflowX: 'auto' }}>
+              <table className="stats-table form-table">
+                <thead>
+                  <tr>
+                    <th onClick={() => handleFormSort('name')} style={{ cursor: 'pointer' }}>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        Player {renderFormSortIndicator('name')}
+                      </div>
+                    </th>
+                    {!teamInfo.hide_positions && (
+                      <th onClick={() => handleFormSort('position')} style={{ cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          Pos {renderFormSortIndicator('position')}
+                        </div>
+                      </th>
+                    )}
+                    <th onClick={() => handleFormSort('appearances')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        Apps {renderFormSortIndicator('appearances')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleFormSort('goals')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        Goals {renderFormSortIndicator('goals')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleFormSort('assists')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        Asts {renderFormSortIndicator('assists')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleFormSort('ga')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        G+A {renderFormSortIndicator('ga')}
+                      </div>
+                    </th>
+                    <th style={{ textAlign: 'center' }}>
+                      <div className="form-match-header-group">
+                        {formMatches.map((m, idx) => (
+                          <Fragment key={m.id || idx}>
+                            {idx > 0 && <div className="form-match-header-divider" />}
+                            <div className="form-match-header-col" title={`vs ${m.opponent}`}>
+                              M{idx + 1}
+                            </div>
+                          </Fragment>
+                        ))}
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayedPlayerForm.map((p) => {
+                    return (
+                      <tr key={p.id}>
+                        <td style={{ fontWeight: 600 }}>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <span>{p.name}</span>
+                          </div>
+                        </td>
+                        {!teamInfo.hide_positions && (
+                          <td>
+                            <span className="badge-pos">{p.position}</span>
+                          </td>
+                        )}
+                        <td style={{ textAlign: 'center' }}>{p.appearances}</td>
+                        <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 700 : 400, color: p.goals > 0 ? '#ca5d03' : 'inherit' }}>
+                          {p.goals}
+                        </td>
+                        <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 700 : 400, color: p.assists > 0 ? 'var(--color-secondary-dark)' : 'inherit' }}>
+                          {p.assists}
+                        </td>
+                        <td style={{ textAlign: 'center', fontWeight: 800, color: formSortField === 'ga' ? 'var(--color-primary-dark)' : 'inherit' }}>
+                          {p.ga}
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <div className="form-match-pill-group">
+                            {p.matchContributions.map((mc, idx) => (
+                              <Fragment key={idx}>
+                                {idx > 0 && <div className="form-match-divider" />}
+                                {!mc.played ? (
+                                  <div className="form-match-slot dnp" title={`vs ${mc.opponent}: Did not play`}>
+                                    <span className="form-match-pill dnp">-</span>
+                                  </div>
+                                ) : !(mc.goals > 0 || mc.assists > 0 || mc.cleanSheet || mc.saves > 0) ? (
+                                  <div className="form-match-slot" title={`vs ${mc.opponent}: Played`}>
+                                    <span className="form-match-pill played-blank">✓</span>
+                                  </div>
+                                ) : (
+                                  <div className="form-match-slot" title={`vs ${mc.opponent}`}>
+                                    {mc.goals > 0 && (
+                                      <span className="form-match-pill has-goal" title={`vs ${mc.opponent}: ${mc.goals} ${mc.goals === 1 ? 'goal' : 'goals'}`}>
+                                        ⚽<span className="pill-count">{mc.goals}</span>
+                                      </span>
+                                    )}
+                                    {mc.assists > 0 && (
+                                      <span className="form-match-pill has-assist" title={`vs ${mc.opponent}: ${mc.assists} ${mc.assists === 1 ? 'assist' : 'assists'}`}>
+                                        🎯<span className="pill-count">{mc.assists}</span>
+                                      </span>
+                                    )}
+                                    {mc.cleanSheet && (
+                                      <span className="form-match-pill has-gk" title={`vs ${mc.opponent}: Clean Sheet`}>
+                                        🧤<span className="pill-count">CS</span>
+                                      </span>
+                                    )}
+                                    {!mc.cleanSheet && mc.saves > 0 && (
+                                      <span className="form-match-pill has-gk" title={`vs ${mc.opponent}: ${mc.saves} saves`}>
+                                        🧤<span className="pill-count">{mc.saves}</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </Fragment>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {displayedPlayerForm.length === 0 && (
+                    <tr>
+                      <td colSpan={teamInfo.hide_positions ? 6 : 7} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+                        No player appearances in recent matches.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Expand / Collapse Toggle for Top 5 vs All */}
+            {sortedPlayerForm.length > 5 && (
+              <div style={{ textAlign: 'center', padding: '0.75rem 1rem', borderTop: '1px solid var(--color-border-light)' }}>
+                <button
+                  type="button"
+                  className="btn-form-expand"
+                  onClick={() => setIsFormExpanded((prev) => !prev)}
+                >
+                  {isFormExpanded ? (
+                    <>
+                      Show Top 5 <ChevronUp size={15} />
+                    </>
+                  ) : (
+                    <>
+                      View All ({sortedPlayerForm.length} Players) <ChevronDown size={15} />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Leaderboards */}
         <div className="card mt-4">
@@ -535,15 +1259,230 @@ export default function StatsView({
           </div>
         )}
 
+        {/* In-Game Dynamics & Milestones Card */}
+        {filteredMatches.length > 0 && showMatchDynamics && (
+          <div className="card mt-4">
+            <h2 className="title-md mb-3">
+              Match Dynamics &amp; Milestones
+            </h2>
+
+            {/* Goal Event Dynamics */}
+            <div className="dynamics-section mb-4">
+              <h3 className="section-label mb-2">
+                Goal Dynamics
+              </h3>
+
+              <div className="dynamics-grid">
+                {/* Scoring First Card */}
+                <div className="dynamics-stat-box">
+                  <div className="dynamics-stat-label">Scoring First Record</div>
+                  <div className="dynamics-stat-value">
+                    {goalDynamics.scoredFirstMatches > 0 ? (
+                      <>
+                        <span style={{ color: 'var(--color-primary-dark)', fontWeight: 800 }}>
+                          {goalDynamics.scoredFirstWinRate}%
+                        </span>
+                        <span className="dynamics-stat-sub">Win Rate when 1-0 up</span>
+                      </>
+                    ) : (
+                      <span className="dynamics-stat-empty">No opening goals recorded</span>
+                    )}
+                  </div>
+                  {goalDynamics.scoredFirstMatches > 0 && (
+                    <div className="dynamics-stat-footnote">
+                      {goalDynamics.scoredFirstWins}W - {goalDynamics.scoredFirstDraws}D - {goalDynamics.scoredFirstLosses}L ({goalDynamics.scoredFirstMatches} {goalDynamics.scoredFirstMatches === 1 ? 'game' : 'games'})
+                    </div>
+                  )}
+                </div>
+
+                {/* Icebreaker King */}
+                <div className="dynamics-stat-box">
+                  <div className="dynamics-stat-label">The "Icebreaker" King</div>
+                  {goalDynamics.icebreakerLeaders.length > 0 ? (
+                    <>
+                      <div className="dynamics-stat-value" style={{ color: 'var(--color-secondary-dark)' }}>
+                        {goalDynamics.icebreakerLeaders.map((p) => p.name).join(', ')}
+                      </div>
+                      <div className="dynamics-stat-footnote">
+                        Scored the opening goal in {goalDynamics.icebreakerLeaders[0].count} {goalDynamics.icebreakerLeaders[0].count === 1 ? 'game' : 'games'}{goalDynamics.icebreakerLeaders.length > 1 ? ' each' : ''}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="dynamics-stat-empty">No opening scorers yet</div>
+                  )}
+                </div>
+
+                {/* Solo Specialist */}
+                <div className="dynamics-stat-box">
+                  <div className="dynamics-stat-label">The "Solo Specialist"</div>
+                  {goalDynamics.soloLeaders.length > 0 ? (
+                    <>
+                      <div className="dynamics-stat-value" style={{ color: '#ea580c' }}>
+                        {goalDynamics.soloLeaders.map((p) => p.name).join(', ')}
+                      </div>
+                      <div className="dynamics-stat-footnote">
+                        {goalDynamics.soloLeaders[0].count} unassisted {goalDynamics.soloLeaders[0].count === 1 ? 'goal' : 'goals'}{goalDynamics.soloLeaders.length > 1 ? ' each' : ''}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="dynamics-stat-empty">No solo goals recorded</div>
+                  )}
+                </div>
+
+                {/* Ultimate Distributor */}
+                <div className="dynamics-stat-box">
+                  <div className="dynamics-stat-label">The "Ultimate Distributor"</div>
+                  {goalDynamics.distributorLeaders.length > 0 ? (
+                    <>
+                      <div className="dynamics-stat-value" style={{ color: '#8b5cf6' }}>
+                        {goalDynamics.distributorLeaders.map((p) => p.name).join(', ')}
+                      </div>
+                      <div className="dynamics-stat-footnote">
+                        Assisted {goalDynamics.distributorLeaders[0].count} different {goalDynamics.distributorLeaders[0].count === 1 ? 'teammate' : 'teammates'}{goalDynamics.distributorLeaders.length > 1 ? ' each' : ''}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="dynamics-stat-empty">No assists recorded yet</div>
+                  )}
+                </div>
+
+                {/* Mr. Reliable (Efficiency Leader) */}
+                {showEfficiencyRating && (
+                  <div className="dynamics-stat-box">
+                    <div className="dynamics-stat-label">"Mr. Reliable" (Efficiency)</div>
+                    {goalDynamics.reliableLeaders.length > 0 ? (
+                      <>
+                        <div className="dynamics-stat-value" style={{ color: 'var(--color-primary-dark)' }}>
+                          {goalDynamics.reliableLeaders.map((p) => p.name).join(', ')}
+                        </div>
+                        <div className="dynamics-stat-footnote">
+                          Involved in {goalDynamics.reliableLeaders[0].consistencyRate}% of games
+                          {goalDynamics.reliableLeaders.every((p) => p.appearances === goalDynamics.reliableLeaders[0].appearances && p.gamesContributed === goalDynamics.reliableLeaders[0].gamesContributed)
+                            ? ` (${goalDynamics.reliableLeaders[0].gamesContributed}/${goalDynamics.reliableLeaders[0].appearances} matches)`
+                            : ` (${goalDynamics.reliableLeaders.map((p) => `${p.name}: ${p.gamesContributed}/${p.appearances}`).join(', ')})`
+                          }
+                        </div>
+                      </>
+                    ) : (
+                      <div className="dynamics-stat-empty">No contributions yet</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Teamplay / Assisted Goals Ratio */}
+                <div className="dynamics-stat-box dynamics-full-width">
+                  <div className="flex-between mb-1">
+                    <span className="dynamics-stat-label">Teamplay Index (Assisted Goals)</span>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-main)' }}>
+                      {goalDynamics.totalTeamGoalsWithEvents > 0 ? `${goalDynamics.assistedPercent}% Assisted` : '0%'}
+                    </span>
+                  </div>
+                  {goalDynamics.totalTeamGoalsWithEvents > 0 ? (
+                    <>
+                      <div className="teamplay-bar-track">
+                        <div
+                          className="teamplay-bar-fill"
+                          style={{ width: `${goalDynamics.assistedPercent}%` }}
+                        />
+                      </div>
+                      <div className="flex-between mt-1" style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                        <span>{goalDynamics.assistedGoalsCount} Assisted Goals</span>
+                        <span>{goalDynamics.totalTeamGoalsWithEvents - goalDynamics.assistedGoalsCount} Solo / Unassisted</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="dynamics-stat-empty">No recorded goal events</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Scoring Milestones */}
+            <div className="milestones-section">
+              <h3 className="section-label mb-2">
+                Scoring Milestones
+              </h3>
+
+              <div className="milestones-grid">
+                {/* Hat-Tricks */}
+                <div className="milestone-box">
+                  <div className="milestone-content">
+                    <div className="milestone-title">Hat-Tricks (3+ Goals)</div>
+                    <div className="milestone-value">
+                      {milestones.totalHatTricks}
+                    </div>
+                    <div className="milestone-desc">
+                      {milestones.hatTrickPlayers.length > 0
+                        ? milestones.hatTrickPlayers.map((p) => `${p.name} (${p.count})`).join(', ')
+                        : 'None recorded yet'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Braces */}
+                <div className="milestone-box">
+                  <div className="milestone-content">
+                    <div className="milestone-title">Braces (2 Goals)</div>
+                    <div className="milestone-value">
+                      {milestones.totalBraces}
+                    </div>
+                    <div className="milestone-desc">
+                      {milestones.bracePlayers.length > 0
+                        ? milestones.bracePlayers.map((p) => `${p.name} (${p.count})`).join(', ')
+                        : 'None recorded yet'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Single Match Record */}
+                <div className="milestone-box">
+                  <div className="milestone-content">
+                    <div className="milestone-title">Match Scoring Record</div>
+                    {milestones.maxSingleGameGoals > 0 ? (
+                      <>
+                        <div className="milestone-value" style={{ color: 'var(--color-primary-dark)' }}>
+                          {milestones.maxSingleGameGoals} {milestones.maxSingleGameGoals === 1 ? 'Goal' : 'Goals'}
+                        </div>
+                        <div className="milestone-desc">
+                          {milestones.recordPerformances.map((perf, i) => (
+                            <span key={i}>
+                              {perf.playerName} (vs {perf.opponent}){i < milestones.recordPerformances.length - 1 ? ', ' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="milestone-desc" style={{ marginTop: '0.25rem' }}>No individual goals recorded</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Full Player Breakdown Table */}
         <div className="card mt-4" style={{ padding: 0, overflow: 'hidden' }}>
-          <div className="flex-between" style={{ padding: '1rem', borderBottom: '1px solid var(--color-border)' }}>
+          <div className="flex-between" style={{ padding: '1rem', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap', gap: '0.5rem' }}>
             <h2 className="title-md" style={{ margin: 0 }}>
               Squad Breakdown
             </h2>
-            <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-              Click column headers to sort
-            </span>
+            <div className="table-mode-toggle">
+              <button
+                type="button"
+                className={`btn-table-mode ${tableMode === 'totals' ? 'active' : ''}`}
+                onClick={() => setTableMode('totals')}
+              >
+                Totals
+              </button>
+              <button
+                type="button"
+                className={`btn-table-mode ${tableMode === 'per_game' ? 'active' : ''}`}
+                onClick={() => setTableMode('per_game')}
+              >
+                Per Game
+              </button>
+            </div>
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -569,22 +1508,29 @@ export default function StatsView({
                   </th>
                   <th onClick={() => handleSort('goals')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      Goals {renderSortIndicator('goals')}
+                      {tableMode === 'per_game' ? 'G/G' : 'Goals'} {renderSortIndicator('goals')}
                     </div>
                   </th>
                   <th onClick={() => handleSort('assists')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      Asts {renderSortIndicator('assists')}
+                      {tableMode === 'per_game' ? 'A/G' : 'Asts'} {renderSortIndicator('assists')}
                     </div>
                   </th>
                   <th onClick={() => handleSort('ga')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      G+A {renderSortIndicator('ga')}
+                      {tableMode === 'per_game' ? 'G+A/G' : 'G+A'} {renderSortIndicator('ga')}
                     </div>
                   </th>
+                  {showEfficiencyRating && (
+                    <th onClick={() => handleSort('efficiency')} style={{ cursor: 'pointer', textAlign: 'center' }} title="Efficiency / Match Involvement: % of games played with at least 1 goal or assist">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {tableMode === 'per_game' ? 'Eff %' : 'Involv %'} {renderSortIndicator('efficiency')}
+                      </div>
+                    </th>
+                  )}
                   <th onClick={() => handleSort('saves')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      Saves {renderSortIndicator('saves')}
+                      {tableMode === 'per_game' ? 'Saves/G' : 'Saves'} {renderSortIndicator('saves')}
                     </div>
                   </th>
                   <th onClick={() => handleSort('cleanSheets')} style={{ cursor: 'pointer', textAlign: 'center' }}>
@@ -595,35 +1541,55 @@ export default function StatsView({
                 </tr>
               </thead>
               <tbody>
-                {sortedPlayers.map((p) => (
-                  <tr key={p.id}>
-                    <td style={{ fontWeight: 600 }}>{p.name}</td>
-                    {!teamInfo.hide_positions && (
-                      <td>
-                        <span className="badge-pos">{p.position}</span>
+                {sortedPlayers.map((p) => {
+                  const goalsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.gPerGame.toFixed(2) : '-') : p.goals;
+                  const assistsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.aPerGame.toFixed(2) : '-') : p.assists;
+                  const gaDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.gaPerGame.toFixed(2) : '-') : (p.goals + p.assists);
+                  const savesDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.savesPerGame.toFixed(2) : '-') : p.saves;
+                  const hasGoals = (tableMode === 'per_game' ? p.gPerGame : p.goals) > 0;
+                  const hasAssists = (tableMode === 'per_game' ? p.aPerGame : p.assists) > 0;
+                  const hasSaves = (tableMode === 'per_game' ? p.savesPerGame : p.saves) > 0;
+
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 600 }}>{p.name}</td>
+                      {!teamInfo.hide_positions && (
+                        <td>
+                          <span className="badge-pos">{p.position}</span>
+                        </td>
+                      )}
+                      <td style={{ textAlign: 'center' }}>{p.appearances}</td>
+                      <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? '#ca5d03' : 'inherit' }}>
+                        {goalsDisplay}
                       </td>
-                    )}
-                    <td style={{ textAlign: 'center' }}>{p.appearances}</td>
-                    <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 700 : 400, color: p.goals > 0 ? '#ca5d03' : 'inherit' }}>
-                      {p.goals}
-                    </td>
-                    <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 700 : 400, color: p.assists > 0 ? 'var(--color-secondary-dark)' : 'inherit' }}>
-                      {p.assists}
-                    </td>
-                    <td style={{ textAlign: 'center', fontWeight: 800, color: sortField === 'ga' ? 'var(--color-primary-dark)' : 'inherit' }}>
-                      {p.goals + p.assists}
-                    </td>
-                    <td style={{ textAlign: 'center', fontWeight: p.saves > 0 ? 700 : 400, color: p.saves > 0 ? '#909c2a' : 'inherit' }}>
-                      {p.saves}
-                    </td>
-                    <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? '#10b981' : 'inherit' }}>
-                      {p.cleanSheets}
-                    </td>
-                  </tr>
-                ))}
+                      <td style={{ textAlign: 'center', fontWeight: hasAssists ? 700 : 400, color: hasAssists ? 'var(--color-secondary-dark)' : 'inherit' }}>
+                        {assistsDisplay}
+                      </td>
+                      <td style={{ textAlign: 'center', fontWeight: 800, color: sortField === 'ga' ? 'var(--color-primary-dark)' : 'inherit' }}>
+                        {gaDisplay}
+                      </td>
+                      {showEfficiencyRating && (
+                        <td style={{ textAlign: 'center', fontWeight: p.consistencyRate > 0 ? 600 : 400, color: p.consistencyRate >= 50 ? 'var(--color-primary-dark)' : 'inherit' }}>
+                          {p.appearances > 0 ? `${p.consistencyRate}%` : '-'}
+                          {p.appearances > 0 && (
+                            <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
+                              ({p.gamesContributed}/{p.appearances})
+                            </div>
+                          )}
+                        </td>
+                      )}
+                      <td style={{ textAlign: 'center', fontWeight: hasSaves ? 700 : 400, color: hasSaves ? '#909c2a' : 'inherit' }}>
+                        {savesDisplay}
+                      </td>
+                      <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? '#10b981' : 'inherit' }}>
+                        {p.cleanSheets}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {sortedPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={8} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+                    <td colSpan={(teamInfo.hide_positions ? 7 : 8) + (showEfficiencyRating ? 1 : 0)} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
                       No squad stats available yet.
                     </td>
                   </tr>

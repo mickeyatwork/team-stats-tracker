@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { LogOut, User, Lock, Mail, Shield, Plus, Check, Edit3 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { LogOut, User, Lock, Mail, Shield, Plus, Check, Edit3, Sliders } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
+import { FEATURE_KEYS, isFeatureEnabled, setFeatureFlag } from '../utils/featureFlags';
 
 export default function SettingsView({
   session,
@@ -23,12 +24,25 @@ export default function SettingsView({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordStatus, setPasswordStatus] = useState({ loading: false, success: null, error: null });
 
-  // Update Active Team Details
+  // Update Active Team Details & Feature Switches
   const [teamNameInput, setTeamNameInput] = useState(teamInfo?.name || '');
   const [seasonInput, setSeasonInput] = useState(teamInfo?.season || '');
   const [hidePositionsInput, setHidePositionsInput] = useState(teamInfo?.hide_positions || false);
+  const [matchDynamicsInput, setMatchDynamicsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
+  const [efficiencyRatingInput, setEfficiencyRatingInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
+
+  // Keep form inputs synced if active team changes
+  useEffect(() => {
+    if (teamInfo) {
+      setTeamNameInput(teamInfo.name || '');
+      setSeasonInput(teamInfo.season || '');
+      setHidePositionsInput(teamInfo.hide_positions || false);
+      setMatchDynamicsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
+      setEfficiencyRatingInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
+    }
+  }, [teamInfo]);
 
   // Add New Team Form Modal state inside settings
   const [showAddTeamModal, setShowAddTeamModal] = useState(false);
@@ -74,21 +88,51 @@ export default function SettingsView({
     if (!teamNameInput || !teamInfo?.id) return;
     setTeamStatus({ loading: true, success: null, error: null });
     try {
-      const { error } = await supabase
+      const newSettings = {
+        ...(teamInfo.settings || {}),
+        [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
+        [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput
+      };
+
+      // Try updating with settings JSONB column
+      let { error } = await supabase
         .from('team')
-        .update({ name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput })
+        .update({
+          name: teamNameInput,
+          season: seasonInput,
+          hide_positions: hidePositionsInput,
+          settings: newSettings
+        })
         .eq('id', teamInfo.id);
 
-      if (error) {
+      // If settings column doesn't exist yet in database, fallback to updating without it
+      if (error && (error.message?.includes('settings') || error.code === 'PGRST204')) {
+        const retry = await supabase
+          .from('team')
+          .update({ name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput })
+          .eq('id', teamInfo.id);
+        if (retry.error) throw retry.error;
+      } else if (error) {
         throw error;
       }
 
-      const updated = { ...teamInfo, name: teamNameInput, season: seasonInput, hide_positions: hidePositionsInput };
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.MATCH_DYNAMICS, matchDynamicsInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.EFFICIENCY_RATING, efficiencyRatingInput);
+
+      const updated = {
+        ...teamInfo,
+        name: teamNameInput,
+        season: seasonInput,
+        hide_positions: hidePositionsInput,
+        [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
+        [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
+        settings: newSettings
+      };
 
       setDefaultMatchVariant(defaultVariant);
       setTeamInfo(updated);
       setAllTeams(allTeams.map((t) => (t.id === teamInfo.id ? updated : t)));
-      setTeamStatus({ loading: false, success: 'Team details and preferences updated!', error: null });
+      setTeamStatus({ loading: false, success: 'Team details and feature settings updated!', error: null });
     } catch (error) {
       setTeamStatus({ loading: false, success: null, error: error.message });
     }
@@ -211,6 +255,111 @@ export default function SettingsView({
                   }}
                 />
               </button>
+            </div>
+
+            {/* Feature Switches (Admin Controls) */}
+            <div style={{ marginTop: '1.25rem', marginBottom: '1.25rem' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Sliders size={14} /> Analytics &amp; Feature Switches (Admin)
+              </div>
+
+              {/* Match Dynamics & Milestones Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.6rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Match Dynamics &amp; Milestones</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Display goal dynamics, opening goal records, distributor honours, and scoring milestone cards
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMatchDynamicsInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: matchDynamicsInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: matchDynamicsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Player Efficiency Rating Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.6rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Player Efficiency Rating (Eff %)</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Display match involvement consistency % in the Squad Breakdown and the Mr. Reliable honour
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEfficiencyRatingInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: efficiencyRatingInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: efficiencyRatingInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
             </div>
 
             <div className="form-group mb-4">

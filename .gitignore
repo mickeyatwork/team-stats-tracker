@@ -1,3 +1,21 @@
+# Dependencies
 node_modules/
+
+# Environment files
 .env
-/.idea/shelf
+.env.local
+.env.*.local
+
+# Production build outputs
+dist/
+dist-ssr/
+*.local
+
+# Editor and OS files
+.DS_Store
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
