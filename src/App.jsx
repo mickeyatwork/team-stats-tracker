@@ -9,7 +9,7 @@ import StatsView from './views/StatsView';
 import SettingsView from './views/SettingsView';
 import MatchReportView from './views/MatchReportView';
 import TournamentView from './views/TournamentView';
-import { FEATURE_KEYS, isFeatureEnabled } from './utils/featureFlags';
+import { getTeamFeatures } from './utils/featureFlags';
 import { getSavedTheme, applyTheme } from './utils/themePreferences';
 import {
   ROLES,
@@ -176,8 +176,7 @@ export default function App() {
       if (teamsData && teamsData.length > 0) {
         const enrichedTeams = teamsData.map((t) => ({
           ...t,
-          [FEATURE_KEYS.MATCH_DYNAMICS]: isFeatureEnabled(t, FEATURE_KEYS.MATCH_DYNAMICS),
-          [FEATURE_KEYS.EFFICIENCY_RATING]: isFeatureEnabled(t, FEATURE_KEYS.EFFICIENCY_RATING)
+          ...getTeamFeatures(t)
         }));
         setAllTeams(enrichedTeams);
 
@@ -239,6 +238,8 @@ export default function App() {
               goals: s.goals || 0,
               assists: s.assists || 0,
               saves: s.saves || 0,
+              attempts: s.attempts || 0,
+              defensive_contributions: s.defensive_contributions || 0,
               is_goalkeeper: s.is_goalkeeper || false
             };
           });
@@ -289,8 +290,7 @@ export default function App() {
       if (data) {
         const enrichedTeam = {
           ...data,
-          [FEATURE_KEYS.MATCH_DYNAMICS]: isFeatureEnabled(data, FEATURE_KEYS.MATCH_DYNAMICS),
-          [FEATURE_KEYS.EFFICIENCY_RATING]: isFeatureEnabled(data, FEATURE_KEYS.EFFICIENCY_RATING)
+          ...getTeamFeatures(data)
         };
         setAllTeams([enrichedTeam, ...allTeams]);
         setTeamInfo(enrichedTeam);

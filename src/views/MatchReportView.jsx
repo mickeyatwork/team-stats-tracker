@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2 } from 'lucide-react';
+import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2, Crosshair, ShieldCheck } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents, generateMissingTimelineEvents } from '../utils/timelineUtils';
 import { parseTournament } from '../utils/tournamentUtils';
+import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
 
 export default function MatchReportView({
   activeMatch,
@@ -60,6 +61,9 @@ export default function MatchReportView({
 
   if (!activeMatch) return null;
 
+  const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
+  const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
+
   const playersInMatch = activeMatch.stats
     ? Object.keys(activeMatch.stats)
         .map((pid) => {
@@ -71,6 +75,8 @@ export default function MatchReportView({
             goals: activeMatch.stats[pid]?.goals || 0,
             assists: activeMatch.stats[pid]?.assists || 0,
             saves: activeMatch.stats[pid]?.saves || 0,
+            attempts: activeMatch.stats[pid]?.attempts || 0,
+            defensive_contributions: activeMatch.stats[pid]?.defensive_contributions || 0,
             is_goalkeeper: activeMatch.stats[pid]?.is_goalkeeper || false
           };
         })
@@ -85,6 +91,8 @@ export default function MatchReportView({
   const totalGoals = playersInMatch.reduce((sum, p) => sum + p.goals, 0);
   const totalAssists = playersInMatch.reduce((sum, p) => sum + p.assists, 0);
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
+  const totalAttempts = playersInMatch.reduce((sum, p) => sum + p.attempts, 0);
+  const totalDC = playersInMatch.reduce((sum, p) => sum + p.defensive_contributions, 0);
 
   const isWin = activeMatch.team_goals > activeMatch.opponent_goals;
   const isLoss = activeMatch.team_goals < activeMatch.opponent_goals;
@@ -387,18 +395,26 @@ export default function MatchReportView({
           if (!isUnassigned && newStats[evt.scorer_id]) {
             const sStats = newStats[evt.scorer_id];
             const updatedGoals = Math.max(0, (sStats.goals || 0) - 1);
-            newStats[evt.scorer_id] = { ...sStats, goals: updatedGoals };
-            await supabase.from('match_stats').upsert(
-              {
-                match_id: activeMatch.id,
-                player_id: evt.scorer_id,
-                goals: updatedGoals,
-                assists: sStats.assists || 0,
-                saves: sStats.saves || 0,
-                is_goalkeeper: sStats.is_goalkeeper || false
-              },
-              { onConflict: 'match_id,player_id' }
-            );
+            const updatedAttempts = showAttempts ? Math.max(0, (sStats.attempts || 0) - 1) : (sStats.attempts || 0);
+            newStats[evt.scorer_id] = { ...sStats, goals: updatedGoals, attempts: updatedAttempts };
+            
+            const payload = {
+              match_id: activeMatch.id,
+              player_id: evt.scorer_id,
+              goals: updatedGoals,
+              assists: sStats.assists || 0,
+              saves: sStats.saves || 0,
+              is_goalkeeper: sStats.is_goalkeeper || false,
+              attempts: updatedAttempts,
+              defensive_contributions: sStats.defensive_contributions || 0
+            };
+            let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+            if (error && (error.message?.includes('column') || error.code === '42703')) {
+              await supabase.from('match_stats').upsert(
+                { match_id: activeMatch.id, player_id: evt.scorer_id, goals: updatedGoals, assists: sStats.assists || 0, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
+                { onConflict: 'match_id,player_id' }
+              );
+            }
           }
 
           if (evt.assister_id && newStats[evt.assister_id]) {
@@ -477,19 +493,27 @@ export default function MatchReportView({
           const newStats = { ...m.stats };
 
           if (newGoalScorerId && newGoalScorerId !== 'UNASSIGNED') {
-            const sStats = newStats[newGoalScorerId] || { goals: 0, assists: 0, saves: 0, is_goalkeeper: false };
-            newStats[newGoalScorerId] = { ...sStats, goals: (sStats.goals || 0) + 1 };
-            await supabase.from('match_stats').upsert(
-              {
-                match_id: activeMatch.id,
-                player_id: newGoalScorerId,
-                goals: (sStats.goals || 0) + 1,
-                assists: sStats.assists || 0,
-                saves: sStats.saves || 0,
-                is_goalkeeper: sStats.is_goalkeeper || false
-              },
-              { onConflict: 'match_id,player_id' }
-            );
+            const sStats = newStats[newGoalScorerId] || { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0, is_goalkeeper: false };
+            const updatedAttempts = showAttempts ? (sStats.attempts || 0) + 1 : (sStats.attempts || 0);
+            newStats[newGoalScorerId] = { ...sStats, goals: (sStats.goals || 0) + 1, attempts: updatedAttempts };
+            
+            const payload = {
+              match_id: activeMatch.id,
+              player_id: newGoalScorerId,
+              goals: (sStats.goals || 0) + 1,
+              assists: sStats.assists || 0,
+              saves: sStats.saves || 0,
+              is_goalkeeper: sStats.is_goalkeeper || false,
+              attempts: updatedAttempts,
+              defensive_contributions: sStats.defensive_contributions || 0
+            };
+            let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+            if (error && (error.message?.includes('column') || error.code === '42703')) {
+              await supabase.from('match_stats').upsert(
+                { match_id: activeMatch.id, player_id: newGoalScorerId, goals: (sStats.goals || 0) + 1, assists: sStats.assists || 0, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
+                { onConflict: 'match_id,player_id' }
+              );
+            }
           }
 
           if (newGoalAssisterId) {
@@ -889,9 +913,15 @@ export default function MatchReportView({
                     <th>Player</th>
                     {!teamInfo.hide_positions && <th>Pos</th>}
                     <th style={{ textAlign: 'center' }}><Target size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> G</th>
+                    {showAttempts && (
+                      <th style={{ textAlign: 'center' }}><Crosshair size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> Att</th>
+                    )}
                     <th style={{ textAlign: 'center' }}><Award size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> A</th>
                     <th style={{ textAlign: 'center' }}>G+A</th>
                     <th style={{ textAlign: 'center' }}><Shield size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> S</th>
+                    {showDC && (
+                      <th style={{ textAlign: 'center' }}><ShieldCheck size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> DC</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -915,11 +945,17 @@ export default function MatchReportView({
                       </td>
                       {!teamInfo.hide_positions && <td><span className="badge-pos">{p.position}</span></td>}
                       <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 600 : 400 }}>{p.goals}</td>
+                      {showAttempts && (
+                        <td style={{ textAlign: 'center', fontWeight: p.attempts > 0 ? 600 : 400, color: p.attempts > 0 ? '#ea580c' : 'inherit' }}>{p.attempts}</td>
+                      )}
                       <td style={{ textAlign: 'center', fontWeight: p.assists > 0 ? 600 : 400 }}>{p.assists}</td>
                       <td style={{ textAlign: 'center', fontWeight: p.goals + p.assists > 0 ? 700 : 400, color: p.goals + p.assists > 0 ? 'var(--color-stat-involvements)' : 'inherit' }}>
                         {p.goals + p.assists}
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: p.saves > 0 ? 600 : 400 }}>{p.saves}</td>
+                      {showDC && (
+                        <td style={{ textAlign: 'center', fontWeight: p.defensive_contributions > 0 ? 600 : 400, color: p.defensive_contributions > 0 ? '#0891b2' : 'inherit' }}>{p.defensive_contributions}</td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -927,9 +963,11 @@ export default function MatchReportView({
                   <tr style={{ background: 'var(--color-bg-body)', fontWeight: 700 }}>
                     <td colSpan={teamInfo.hide_positions ? 1 : 2} style={{ textAlign: 'right', paddingRight: '1rem' }}>Totals</td>
                     <td style={{ textAlign: 'center' }}>{totalGoals}</td>
+                    {showAttempts && <td style={{ textAlign: 'center', color: '#ea580c' }}>{totalAttempts}</td>}
                     <td style={{ textAlign: 'center' }}>{totalAssists}</td>
                     <td style={{ textAlign: 'center' }}>{totalGoals + totalAssists}</td>
                     <td style={{ textAlign: 'center' }}>{totalSaves}</td>
+                    {showDC && <td style={{ textAlign: 'center', color: '#0891b2' }}>{totalDC}</td>}
                   </tr>
                 </tfoot>
               </table>

@@ -682,8 +682,10 @@ body {
   letter-spacing: 0.03em;
 }
 .stat-control-label.goals { color: var(--color-stat-goals); }
+.stat-control-label.attempts { color: #ea580c; }
 .stat-control-label.assists { color: var(--color-secondary-dark); }
 .stat-control-label.saves { color: #b45309; }
+.stat-control-label.dc { color: #0891b2; }
 
 .stat-card-control {
   display: flex;
@@ -735,8 +737,10 @@ body {
 }
 
 .stat-card-control .btn-stat-plus.goals { background-color: var(--color-success); }
+.stat-card-control .btn-stat-plus.attempts { background-color: #ea580c; }
 .stat-card-control .btn-stat-plus.assists { background-color: var(--color-secondary); }
 .stat-card-control .btn-stat-plus.saves { background-color: #f59e0b; }
+.stat-card-control .btn-stat-plus.dc { background-color: #0891b2; }
 
 .stat-card-control .stat-value {
   font-size: 1.05rem;
@@ -783,16 +787,20 @@ body {
   justify-content: center;
 }
 .stat-card-total-box.goals { border-color: var(--color-success-light); }
+.stat-card-total-box.attempts { border-color: #fed7aa; }
 .stat-card-total-box.assists { border-color: var(--color-secondary-light); }
 .stat-card-total-box.saves { border-color: #fde68a; }
+.stat-card-total-box.dc { border-color: #a5f3fc; }
 
 .stat-card-total-num {
   font-size: 1.15rem;
   font-weight: 900;
 }
 .stat-card-total-num.goals { color: var(--color-stat-goals); }
+.stat-card-total-num.attempts { color: #ea580c; }
 .stat-card-total-num.assists { color: var(--color-secondary-dark); }
 .stat-card-total-num.saves { color: #b45309; }
+.stat-card-total-num.dc { color: #0891b2; }
 
 .stat-card-total-title {
   font-size: 0.65rem;
@@ -831,8 +839,10 @@ body {
   width: 72px;
 }
 .stat-col-header.goals { color: var(--color-stat-goals); }
+.stat-col-header.attempts { color: #ea580c; }
 .stat-col-header.assists { color: var(--color-secondary-dark); }
 .stat-col-header.saves { color: #b45309; }
+.stat-col-header.dc { color: #0891b2; }
 
 .stat-row {
   display: flex;
@@ -913,8 +923,10 @@ body {
   box-shadow: var(--shadow-sm);
 }
 .btn-stat-plus.goals { background-color: var(--color-success); }
+.btn-stat-plus.attempts { background-color: #ea580c; }
 .btn-stat-plus.assists { background-color: var(--color-secondary); }
 .btn-stat-plus.saves { background-color: #f59e0b; }
+.btn-stat-plus.dc { background-color: #0891b2; }
 
 .stat-value {
   font-weight: 700;
@@ -948,8 +960,10 @@ body {
   font-size: 0.875rem;
 }
 .stat-total-cell.goals { color: var(--color-stat-goals); }
+.stat-total-cell.attempts { color: #ea580c; }
 .stat-total-cell.assists { color: var(--color-secondary-dark); }
 .stat-total-cell.saves { color: #b45309; }
+.stat-total-cell.dc { color: #0891b2; }
 
 /* Table mode mobile responsive overrides */
 @media (max-width: 480px) {
@@ -1239,9 +1253,11 @@ body {
   border-bottom: 1px solid var(--color-border);
 }
 .leaderboard-box-title.goals { color: var(--color-stat-goals); }
+.leaderboard-box-title.attempts { color: #ea580c; }
 .leaderboard-box-title.assists { color: var(--color-stat-assists); }
 .leaderboard-box-title.involvements { color: var(--color-stat-involvements); }
 .leaderboard-box-title.saves { color: var(--color-stat-saves); }
+.leaderboard-box-title.dc { color: #0891b2; }
 .leaderboard-box-title.cleanSheets { color: var(--color-stat-clean-sheets); }
 
 .leaderboard-row {
@@ -1272,9 +1288,11 @@ body {
   font-size: 0.9rem;
 }
 .leaderboard-row .p-score.goals { color: var(--color-stat-goals); }
+.leaderboard-row .p-score.attempts { color: #ea580c; }
 .leaderboard-row .p-score.assists { color: var(--color-stat-assists); }
 .leaderboard-row .p-score.involvements { color: var(--color-stat-involvements); }
 .leaderboard-row .p-score.saves { color: var(--color-stat-saves); }
+.leaderboard-row .p-score.dc { color: #0891b2; }
 .leaderboard-row .p-score.cleanSheets { color: var(--color-stat-clean-sheets); }
 
 .empty-sub {
@@ -2056,6 +2074,12 @@ body {
   border: 1px solid #fdba74;
 }
 
+.form-match-pill.has-attempts {
+  background-color: #fff7ed;
+  color: #ea580c;
+  border: 1px solid #fed7aa;
+}
+
 .form-match-pill.has-assist {
   background-color: var(--color-secondary-light);
   color: var(--color-secondary-dark);
@@ -2066,6 +2090,12 @@ body {
   background-color: #f3e8ff;
   color: var(--color-stat-involvements);
   border: 1px solid #d8b4fe;
+}
+
+.form-match-pill.has-dc {
+  background-color: #ecfeff;
+  color: #0891b2;
+  border: 1px solid #a5f3fc;
 }
 
 .form-match-pill.has-cs {

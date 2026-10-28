@@ -1,5 +1,5 @@
 import { useState, useMemo, Fragment } from 'react';
-import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Sparkles, Clock } from 'lucide-react';
+import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Crosshair, ShieldCheck } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
 
@@ -18,6 +18,8 @@ export default function StatsView({
   // Feature switches (Admin configurable per team)
   const showMatchDynamics = isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS);
   const showEfficiencyRating = isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING);
+  const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
+  const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
 
   // Sort state for squad breakdown table
   const [sortField, setSortField] = useState('ga'); // default sort by G+A
@@ -104,6 +106,8 @@ export default function StatsView({
         goals: 0,
         assists: 0,
         saves: 0,
+        attempts: 0,
+        dc: 0,
         cleanSheets: 0,
         gamesContributed: 0
       };
@@ -133,6 +137,8 @@ export default function StatsView({
               goals: 0,
               assists: 0,
               saves: 0,
+              attempts: 0,
+              dc: 0,
               cleanSheets: 0,
               gamesContributed: 0
             };
@@ -142,6 +148,8 @@ export default function StatsView({
           playerAgg[pid].goals += pStat.goals || 0;
           playerAgg[pid].assists += pStat.assists || 0;
           playerAgg[pid].saves += pStat.saves || 0;
+          playerAgg[pid].attempts += pStat.attempts || 0;
+          playerAgg[pid].dc += pStat.defensive_contributions || 0;
 
           if ((pStat.goals || 0) > 0 || (pStat.assists || 0) > 0) {
             playerAgg[pid].gamesContributed += 1;
@@ -159,6 +167,8 @@ export default function StatsView({
       const aPerGame = p.appearances > 0 ? p.assists / p.appearances : 0;
       const gaPerGame = p.appearances > 0 ? (p.goals + p.assists) / p.appearances : 0;
       const savesPerGame = p.appearances > 0 ? p.saves / p.appearances : 0;
+      const attemptsPerGame = p.appearances > 0 ? p.attempts / p.appearances : 0;
+      const dcPerGame = p.appearances > 0 ? p.dc / p.appearances : 0;
       const consistencyRate = p.appearances > 0 ? Math.round((p.gamesContributed / p.appearances) * 100) : 0;
       return {
         ...p,
@@ -166,6 +176,8 @@ export default function StatsView({
         aPerGame,
         gaPerGame,
         savesPerGame,
+        attemptsPerGame,
+        dcPerGame,
         consistencyRate
       };
     });
@@ -178,6 +190,12 @@ export default function StatsView({
     
     const fullSaves = [...playerList].sort((a, b) => b.saves - a.saves || b.appearances - a.appearances);
     const topSaves = fullSaves.slice(0, 3);
+
+    const fullAttempts = [...playerList].sort((a, b) => b.attempts - a.attempts || b.appearances - a.appearances);
+    const topAttempts = fullAttempts.slice(0, 3);
+
+    const fullDC = [...playerList].sort((a, b) => b.dc - a.dc || b.appearances - a.appearances);
+    const topDC = fullDC.slice(0, 3);
     
     const fullCleanSheets = [...playerList].sort((a, b) => b.cleanSheets - a.cleanSheets || b.appearances - a.appearances);
     const topCleanSheets = fullCleanSheets.slice(0, 3);
@@ -201,11 +219,15 @@ export default function StatsView({
       topScorers,
       topAssists,
       topSaves,
+      topAttempts,
+      topDC,
       topCleanSheets,
       topInvolvements,
       fullScorers,
       fullAssists,
       fullSaves,
+      fullAttempts,
+      fullDC,
       fullCleanSheets,
       fullInvolvements
     };
@@ -269,6 +291,14 @@ export default function StatsView({
         case 'saves':
           valA = tableMode === 'per_game' ? a.savesPerGame : a.saves;
           valB = tableMode === 'per_game' ? b.savesPerGame : b.saves;
+          break;
+        case 'attempts':
+          valA = tableMode === 'per_game' ? a.attemptsPerGame : a.attempts;
+          valB = tableMode === 'per_game' ? b.attemptsPerGame : b.attempts;
+          break;
+        case 'dc':
+          valA = tableMode === 'per_game' ? a.dcPerGame : a.dc;
+          valB = tableMode === 'per_game' ? b.dcPerGame : b.dc;
           break;
         case 'cleanSheets':
           valA = a.cleanSheets;
@@ -606,6 +636,8 @@ export default function StatsView({
         goals: 0,
         assists: 0,
         saves: 0,
+        attempts: 0,
+        dc: 0,
         cleanSheets: 0,
         matchContributions: []
       };
@@ -623,6 +655,8 @@ export default function StatsView({
             goals: 0,
             assists: 0,
             saves: 0,
+            attempts: 0,
+            dc: 0,
             cleanSheets: 0,
             matchContributions: []
           };
@@ -635,6 +669,8 @@ export default function StatsView({
           const g = pStat.goals || 0;
           const a = pStat.assists || 0;
           const s = pStat.saves || 0;
+          const att = pStat.attempts || 0;
+          const dc = pStat.defensive_contributions || 0;
           const isGk = !!pStat.is_goalkeeper;
           const cs = isGk && m.opponent_goals === 0 && !m.hide_score ? 1 : 0;
 
@@ -642,6 +678,8 @@ export default function StatsView({
           playerAgg[pid].goals += g;
           playerAgg[pid].assists += a;
           playerAgg[pid].saves += s;
+          playerAgg[pid].attempts += att;
+          playerAgg[pid].dc += dc;
           playerAgg[pid].cleanSheets += cs;
 
           playerAgg[pid].matchContributions.push({
@@ -651,6 +689,8 @@ export default function StatsView({
             goals: g,
             assists: a,
             saves: s,
+            attempts: att,
+            dc: dc,
             isGoalkeeper: isGk,
             cleanSheet: cs === 1
           });
@@ -662,6 +702,8 @@ export default function StatsView({
             goals: 0,
             assists: 0,
             saves: 0,
+            attempts: 0,
+            dc: 0,
             isGoalkeeper: false,
             cleanSheet: false
           });
@@ -1210,6 +1252,52 @@ export default function StatsView({
                   ))
               )}
             </div>
+
+            {/* Top Attempts (when enabled) */}
+            {showAttempts && (
+              <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('attempts')} style={{ cursor: 'pointer', position: 'relative' }}>
+                <div className="leaderboard-box-title attempts" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span><Crosshair size={16} /> Top Attempts</span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
+                </div>
+                {statsSummary.topAttempts.filter((p) => p.attempts > 0).length === 0 ? (
+                  <div className="empty-sub">No attempts recorded yet</div>
+                ) : (
+                  statsSummary.topAttempts
+                    .filter((p) => p.attempts > 0)
+                    .map((p, idx) => (
+                      <div key={p.id} className="leaderboard-row">
+                        <span className="rank">{idx + 1}.</span>
+                        <span className="p-name">{p.name}</span>
+                        <span className="p-score attempts">{p.attempts}</span>
+                      </div>
+                    ))
+                )}
+              </div>
+            )}
+
+            {/* Top Defensive Contributions (when enabled) */}
+            {showDC && (
+              <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('dc')} style={{ cursor: 'pointer', position: 'relative' }}>
+                <div className="leaderboard-box-title dc" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span><ShieldCheck size={16} /> Defensive Contributions</span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
+                </div>
+                {statsSummary.topDC.filter((p) => p.dc > 0).length === 0 ? (
+                  <div className="empty-sub">No defensive contributions yet</div>
+                ) : (
+                  statsSummary.topDC
+                    .filter((p) => p.dc > 0)
+                    .map((p, idx) => (
+                      <div key={p.id} className="leaderboard-row">
+                        <span className="rank">{idx + 1}.</span>
+                        <span className="p-name">{p.name}</span>
+                        <span className="p-score dc">{p.dc}</span>
+                      </div>
+                    ))
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1515,6 +1603,13 @@ export default function StatsView({
                       {tableMode === 'per_game' ? 'G/G' : 'Goals'} {renderSortIndicator('goals')}
                     </div>
                   </th>
+                  {showAttempts && (
+                    <th onClick={() => handleSort('attempts')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {tableMode === 'per_game' ? 'Att/G' : 'Att'} {renderSortIndicator('attempts')}
+                      </div>
+                    </th>
+                  )}
                   <th onClick={() => handleSort('assists')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {tableMode === 'per_game' ? 'A/G' : 'Asts'} {renderSortIndicator('assists')}
@@ -1537,6 +1632,13 @@ export default function StatsView({
                       {tableMode === 'per_game' ? 'Saves/G' : 'Saves'} {renderSortIndicator('saves')}
                     </div>
                   </th>
+                  {showDC && (
+                    <th onClick={() => handleSort('dc')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {tableMode === 'per_game' ? 'DC/G' : 'DC'} {renderSortIndicator('dc')}
+                      </div>
+                    </th>
+                  )}
                   <th onClick={() => handleSort('cleanSheets')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap' }}>
                       CS {renderSortIndicator('cleanSheets')}
@@ -1547,12 +1649,16 @@ export default function StatsView({
               <tbody>
                 {sortedPlayers.map((p) => {
                   const goalsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.gPerGame.toFixed(2) : '-') : p.goals;
+                  const attemptsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.attemptsPerGame.toFixed(2) : '-') : p.attempts;
                   const assistsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.aPerGame.toFixed(2) : '-') : p.assists;
                   const gaDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.gaPerGame.toFixed(2) : '-') : (p.goals + p.assists);
                   const savesDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.savesPerGame.toFixed(2) : '-') : p.saves;
+                  const dcDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.dcPerGame.toFixed(2) : '-') : p.dc;
                   const hasGoals = (tableMode === 'per_game' ? p.gPerGame : p.goals) > 0;
+                  const hasAttempts = (tableMode === 'per_game' ? p.attemptsPerGame : p.attempts) > 0;
                   const hasAssists = (tableMode === 'per_game' ? p.aPerGame : p.assists) > 0;
                   const hasSaves = (tableMode === 'per_game' ? p.savesPerGame : p.saves) > 0;
+                  const hasDC = (tableMode === 'per_game' ? p.dcPerGame : p.dc) > 0;
 
                   return (
                     <tr key={p.id}>
@@ -1566,6 +1672,11 @@ export default function StatsView({
                       <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? 'var(--color-stat-goals)' : 'inherit' }}>
                         {goalsDisplay}
                       </td>
+                      {showAttempts && (
+                        <td style={{ textAlign: 'center', fontWeight: hasAttempts ? 700 : 400, color: hasAttempts ? '#ea580c' : 'inherit' }}>
+                          {attemptsDisplay}
+                        </td>
+                      )}
                       <td style={{ textAlign: 'center', fontWeight: hasAssists ? 700 : 400, color: hasAssists ? 'var(--color-secondary-dark)' : 'inherit' }}>
                         {assistsDisplay}
                       </td>
@@ -1585,6 +1696,11 @@ export default function StatsView({
                       <td style={{ textAlign: 'center', fontWeight: hasSaves ? 700 : 400, color: hasSaves ? 'var(--color-stat-saves)' : 'inherit' }}>
                         {savesDisplay}
                       </td>
+                      {showDC && (
+                        <td style={{ textAlign: 'center', fontWeight: hasDC ? 700 : 400, color: hasDC ? '#0891b2' : 'inherit' }}>
+                          {dcDisplay}
+                        </td>
+                      )}
                       <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? 'var(--color-stat-clean-sheets)' : 'inherit' }}>
                         {p.cleanSheets}
                       </td>
@@ -1593,7 +1709,7 @@ export default function StatsView({
                 })}
                 {sortedPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={(teamInfo.hide_positions ? 7 : 8) + (showEfficiencyRating ? 1 : 0)} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+                    <td colSpan={(teamInfo.hide_positions ? 7 : 8) + (showEfficiencyRating ? 1 : 0) + (showAttempts ? 1 : 0) + (showDC ? 1 : 0)} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
                       No squad stats available yet.
                     </td>
                   </tr>
@@ -1655,9 +1771,11 @@ export default function StatsView({
             </button>
             <h3 className="title-md mb-4 flex-row gap-2" style={{ textTransform: 'capitalize', paddingRight: '2rem' }}>
               {expandedLeaderboard === 'goals' && <><Target size={20} color="var(--color-stat-goals)" /> <span style={{ color: 'var(--color-stat-goals)' }}>Top Goals</span></>}
+              {expandedLeaderboard === 'attempts' && <><Crosshair size={20} color="#ea580c" /> <span style={{ color: '#ea580c' }}>Top Attempts</span></>}
               {expandedLeaderboard === 'assists' && <><Award size={20} color="var(--color-stat-assists)" /> <span style={{ color: 'var(--color-stat-assists)' }}>Top Assists</span></>}
               {expandedLeaderboard === 'involvements' && <><Zap size={20} color="var(--color-stat-involvements)" /> <span style={{ color: 'var(--color-stat-involvements)' }}>Goal Involvements</span></>}
               {expandedLeaderboard === 'saves' && <><Shield size={20} color="var(--color-stat-saves)" /> <span style={{ color: 'var(--color-stat-saves)' }}>Top Saves</span></>}
+              {expandedLeaderboard === 'dc' && <><ShieldCheck size={20} color="#0891b2" /> <span style={{ color: '#0891b2' }}>Defensive Contributions</span></>}
               {expandedLeaderboard === 'cleanSheets' && <><Shield size={20} color="var(--color-stat-clean-sheets)" /> <span style={{ color: 'var(--color-stat-clean-sheets)' }}>Top Clean Sheets</span></>}
               {expandedLeaderboard === 'combinations' && <><Heart size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Combinations</span></>}
             </h3>
@@ -1704,9 +1822,11 @@ export default function StatsView({
                 let metric = '';
                 let color = '';
                 if (expandedLeaderboard === 'goals') { list = statsSummary.fullScorers.filter(p => p.goals > 0); metric = 'goals'; color = 'goals'; }
+                else if (expandedLeaderboard === 'attempts') { list = statsSummary.fullAttempts.filter(p => p.attempts > 0); metric = 'attempts'; color = 'attempts'; }
                 else if (expandedLeaderboard === 'assists') { list = statsSummary.fullAssists.filter(p => p.assists > 0); metric = 'assists'; color = 'assists'; }
                 else if (expandedLeaderboard === 'involvements') { list = statsSummary.fullInvolvements.filter(p => (p.goals + p.assists) > 0); metric = 'involvements'; color = 'involvements'; }
                 else if (expandedLeaderboard === 'saves') { list = statsSummary.fullSaves.filter(p => p.saves > 0); metric = 'saves'; color = 'saves'; }
+                else if (expandedLeaderboard === 'dc') { list = statsSummary.fullDC.filter(p => p.dc > 0); metric = 'dc'; color = 'dc'; }
                 else if (expandedLeaderboard === 'cleanSheets') { list = statsSummary.fullCleanSheets.filter(p => p.cleanSheets > 0); metric = 'cleanSheets'; color = 'cleanSheets'; }
                 
                 if (list.length === 0) return <div className="empty-sub">No stats recorded yet</div>;
@@ -1716,7 +1836,13 @@ export default function StatsView({
                     <span className="rank">{idx + 1}.</span>
                     <span className="p-name">{p.name}</span>
                     <span className={`p-score ${color}`}>
-                      {metric === 'goals' ? p.goals : metric === 'assists' ? p.assists : metric === 'saves' ? p.saves : metric === 'cleanSheets' ? p.cleanSheets : (p.goals + p.assists)}
+                      {metric === 'goals' ? p.goals :
+                       metric === 'attempts' ? p.attempts :
+                       metric === 'assists' ? p.assists :
+                       metric === 'saves' ? p.saves :
+                       metric === 'dc' ? p.dc :
+                       metric === 'cleanSheets' ? p.cleanSheets :
+                       (p.goals + p.assists)}
                     </span>
                   </div>
                 ));
