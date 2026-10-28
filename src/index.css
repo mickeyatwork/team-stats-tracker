@@ -13,6 +13,13 @@
   --color-danger: #ef4444; /* Red 500 */
   --color-danger-dark: #dc2626; /* Red 600 */
   
+  /* Category / Stat Colors */
+  --color-stat-goals: var(--color-primary-dark);
+  --color-stat-assists: var(--color-secondary-dark);
+  --color-stat-involvements: #7c3aed; /* Electric Purple */
+  --color-stat-saves: #b45309; /* Warm Amber */
+  --color-stat-clean-sheets: #0891b2; /* Crisp Teal/Cyan */
+  
   --color-bg-body: #f8fafc; /* Slate 50 */
   --color-bg-card: #ffffff;
   
@@ -1214,9 +1221,11 @@ body {
   padding-bottom: 0.35rem;
   border-bottom: 1px solid var(--color-border);
 }
-.leaderboard-box-title.goals { color: var(--color-primary-dark); }
-.leaderboard-box-title.assists { color: var(--color-secondary-dark); }
-.leaderboard-box-title.saves { color: #b45309; }
+.leaderboard-box-title.goals { color: var(--color-stat-goals); }
+.leaderboard-box-title.assists { color: var(--color-stat-assists); }
+.leaderboard-box-title.involvements { color: var(--color-stat-involvements); }
+.leaderboard-box-title.saves { color: var(--color-stat-saves); }
+.leaderboard-box-title.cleanSheets { color: var(--color-stat-clean-sheets); }
 
 .leaderboard-row {
   display: flex;
@@ -1245,9 +1254,11 @@ body {
   font-weight: 900;
   font-size: 0.9rem;
 }
-.leaderboard-row .p-score.goals { color: var(--color-primary-dark); }
-.leaderboard-row .p-score.assists { color: var(--color-secondary-dark); }
-.leaderboard-row .p-score.saves { color: #b45309; }
+.leaderboard-row .p-score.goals { color: var(--color-stat-goals); }
+.leaderboard-row .p-score.assists { color: var(--color-stat-assists); }
+.leaderboard-row .p-score.involvements { color: var(--color-stat-involvements); }
+.leaderboard-row .p-score.saves { color: var(--color-stat-saves); }
+.leaderboard-row .p-score.cleanSheets { color: var(--color-stat-clean-sheets); }
 
 .empty-sub {
   font-size: 0.75rem;
@@ -1957,8 +1968,8 @@ body {
 }
 
 .form-match-header-col {
-  width: 58px;
-  min-width: 58px;
+  width: 62px;
+  min-width: 62px;
   text-align: center;
   font-size: 0.68rem;
   font-weight: 700;
@@ -1991,8 +2002,8 @@ body {
   background-color: var(--color-bg-body);
   border: 1px solid var(--color-border-light);
   min-height: 26px;
-  width: 58px;
-  min-width: 58px;
+  width: 62px;
+  min-width: 62px;
   flex-shrink: 0;
   box-sizing: border-box;
 }
@@ -2009,7 +2020,7 @@ body {
   gap: 0.15rem;
   min-width: 22px;
   height: 22px;
-  padding: 0 0.3rem;
+  padding: 0 0.25rem;
   border-radius: var(--radius-sm);
   font-size: 0.68rem;
   font-weight: 700;
@@ -2035,15 +2046,27 @@ body {
 }
 
 .form-match-pill.has-both {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary-dark);
-  border: 1px solid #a7f3d0;
+  background-color: #f3e8ff;
+  color: var(--color-stat-involvements);
+  border: 1px solid #d8b4fe;
+}
+
+.form-match-pill.has-cs {
+  background-color: #ecfeff;
+  color: var(--color-stat-clean-sheets);
+  border: 1px solid #a5f3fc;
+}
+
+.form-match-pill.has-saves {
+  background-color: #fef3c7;
+  color: var(--color-stat-saves);
+  border: 1px solid #fde68a;
 }
 
 .form-match-pill.has-gk {
-  background-color: #ecfdf5;
-  color: #047857;
-  border: 1px solid #a7f3d0;
+  background-color: #ecfeff;
+  color: var(--color-stat-clean-sheets);
+  border: 1px solid #a5f3fc;
 }
 
 .form-match-pill.played-blank {
