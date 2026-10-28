@@ -11,7 +11,7 @@ export default function TournamentView({
   matches,
   setMatches,
   squad,
-  _teamInfo,
+  teamInfo,
   session,
   setCurrentView,
   setActiveMatchId,
