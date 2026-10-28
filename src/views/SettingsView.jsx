@@ -58,6 +58,8 @@ export default function SettingsView({
   const [hidePositionsInput, setHidePositionsInput] = useState(teamInfo?.hide_positions || false);
   const [matchDynamicsInput, setMatchDynamicsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
   const [efficiencyRatingInput, setEfficiencyRatingInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
+  const [attemptsInput, setAttemptsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
+  const [defensiveContributionsInput, setDefensiveContributionsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
 
@@ -97,6 +99,8 @@ export default function SettingsView({
       setHidePositionsInput(teamInfo.hide_positions || false);
       setMatchDynamicsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
       setEfficiencyRatingInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
+      setAttemptsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
+      setDefensiveContributionsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
     }
   }, [teamInfo]);
 
@@ -148,7 +152,9 @@ export default function SettingsView({
       const newSettings = {
         ...(teamInfo.settings || {}),
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
-        [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput
+        [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
+        [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
+        [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput
       };
 
       // Try updating with settings JSONB column
@@ -174,6 +180,8 @@ export default function SettingsView({
 
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.MATCH_DYNAMICS, matchDynamicsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.EFFICIENCY_RATING, efficiencyRatingInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.ATTEMPTS, attemptsInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS, defensiveContributionsInput);
 
       const updated = {
         ...teamInfo,
@@ -181,6 +189,8 @@ export default function SettingsView({
         hide_positions: hidePositionsInput,
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
+        [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
+        [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
         settings: newSettings
       };
 
@@ -854,7 +864,7 @@ export default function SettingsView({
                   padding: '0.75rem 1rem',
                   background: 'var(--color-border-light)',
                   borderRadius: 'var(--radius-lg)',
-                  marginBottom: '1rem'
+                  marginBottom: '0.75rem'
                 }}
               >
                 <div style={{ paddingRight: '1rem' }}>
@@ -883,6 +893,104 @@ export default function SettingsView({
                       position: 'absolute',
                       top: '0.2rem',
                       left: efficiencyRatingInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Attempts at Goal Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.75rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Attempts at Goal</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Track shots and attempts per player during matches; scoring a goal automatically adds an attempt
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttemptsInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: attemptsInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: attemptsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Defensive Contributions (DC) Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '1rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Defensive Contributions (DC)</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Track tackles, interceptions, blocks, and clearances under defensive contributions in match counters and charts
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDefensiveContributionsInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: defensiveContributionsInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: defensiveContributionsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
                       width: '1.35rem',
                       height: '1.35rem',
                       background: 'white',

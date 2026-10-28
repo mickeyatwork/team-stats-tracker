@@ -157,7 +157,7 @@ export default function TournamentView({
 
       const initialStats = {};
       selectedSquad.forEach((pid) => {
-        initialStats[pid] = { goals: 0, assists: 0, saves: 0 };
+        initialStats[pid] = { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 };
       });
 
       const dbMatch = {
@@ -185,10 +185,23 @@ export default function TournamentView({
           player_id: pid,
           goals: 0,
           assists: 0,
-          saves: 0
+          saves: 0,
+          attempts: 0,
+          defensive_contributions: 0
         }));
 
-        const { error: statsErr } = await supabase.from('match_stats').insert(statsToInsert);
+        let { error: statsErr } = await supabase.from('match_stats').insert(statsToInsert);
+        if (statsErr && (statsErr.message?.includes('column') || statsErr.code === '42703')) {
+          const fallbackStats = selectedSquad.map((pid) => ({
+            match_id: newDbMatch.id,
+            player_id: pid,
+            goals: 0,
+            assists: 0,
+            saves: 0
+          }));
+          const retry = await supabase.from('match_stats').insert(fallbackStats);
+          statsErr = retry.error;
+        }
         if (statsErr) console.error('Error inserting tournament match stats:', statsErr);
 
         const matchWithStats = { ...newDbMatch, stats: initialStats };

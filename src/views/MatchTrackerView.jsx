@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
 import { parseTournament, getTournamentAvailablePlayers } from '../utils/tournamentUtils';
+import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -37,6 +38,9 @@ export default function MatchTrackerView({
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('matchTrackerViewMode') || 'table';
   });
+
+  const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
+  const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
 
   // Timeline State
   const [goalEvents, setGoalEvents] = useState([]);
@@ -111,13 +115,29 @@ export default function MatchTrackerView({
     }
   };
 
-  // Autosave Player Stats (Goals, Assists, Saves, GK status)
-  const savePlayerStatToDb = useDebounceCallback(async (matchId, playerId, goals, assists, saves, is_goalkeeper) => {
-    const { error } = await supabase.from('match_stats').upsert(
-      { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
-      { onConflict: 'match_id,player_id' }
-    );
-    if (error) console.error('Error saving player stat:', error);
+  // Autosave Player Stats (Goals, Assists, Saves, Attempts, DC, GK status)
+  const savePlayerStatToDb = useDebounceCallback(async (matchId, playerId, goals, assists, saves, is_goalkeeper, attempts, defensive_contributions) => {
+    const payload = {
+      match_id: matchId,
+      player_id: playerId,
+      goals,
+      assists,
+      saves,
+      is_goalkeeper
+    };
+    if (attempts !== undefined) payload.attempts = attempts;
+    if (defensive_contributions !== undefined) payload.defensive_contributions = defensive_contributions;
+
+    let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+    if (error && (error.message?.includes('column') || error.code === '42703')) {
+      const fallback = await supabase.from('match_stats').upsert(
+        { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
+        { onConflict: 'match_id,player_id' }
+      );
+      if (fallback.error) console.error('Error saving player stat (fallback):', fallback.error);
+    } else if (error) {
+      console.error('Error saving player stat:', error);
+    }
   }, 1000);
 
   const updateMatchStat = (matchId, playerId, stat, delta) => {
@@ -145,8 +165,10 @@ export default function MatchTrackerView({
     const g = stat === 'goals' ? newVal : m.stats[playerId]?.goals || 0;
     const a = stat === 'assists' ? newVal : m.stats[playerId]?.assists || 0;
     const s = stat === 'saves' ? newVal : m.stats[playerId]?.saves || 0;
+    const att = stat === 'attempts' ? newVal : m.stats[playerId]?.attempts || 0;
+    const dc = stat === 'defensive_contributions' ? newVal : m.stats[playerId]?.defensive_contributions || 0;
     const isGk = stat === 'is_goalkeeper' ? newVal : m.stats[playerId]?.is_goalkeeper || false;
-    savePlayerStatToDb(matchId, playerId, g, a, s, isGk);
+    savePlayerStatToDb(matchId, playerId, g, a, s, isGk, att, dc);
   };
 
   const toggleGoalkeeper = (matchId, playerId) => {
@@ -174,7 +196,9 @@ export default function MatchTrackerView({
     const g = m.stats[playerId]?.goals || 0;
     const a = m.stats[playerId]?.assists || 0;
     const s = m.stats[playerId]?.saves || 0;
-    savePlayerStatToDb(matchId, playerId, g, a, s, newVal);
+    const att = m.stats[playerId]?.attempts || 0;
+    const dc = m.stats[playerId]?.defensive_contributions || 0;
+    savePlayerStatToDb(matchId, playerId, g, a, s, newVal, att, dc);
   };
 
   const handleAddGoalClick = (playerId) => {
@@ -189,10 +213,11 @@ export default function MatchTrackerView({
     const m = matches.find((x) => x.id === activeMatch.id);
     if (!m) return;
     
-    const scorerStats = m.stats[scorerId] || { goals: 0, assists: 0, saves: 0 };
-    const assisterStats = assisterId ? (m.stats[assisterId] || { goals: 0, assists: 0, saves: 0 }) : null;
+    const scorerStats = m.stats[scorerId] || { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 };
+    const assisterStats = assisterId ? (m.stats[assisterId] || { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 }) : null;
 
     const newScorerGoals = scorerStats.goals + 1;
+    const newScorerAttempts = showAttempts ? (scorerStats.attempts || 0) + 1 : (scorerStats.attempts || 0);
     const newAssisterAssists = assisterStats ? assisterStats.assists + 1 : 0;
     const newTeamGoals = m.team_goals + 1;
 
@@ -200,7 +225,7 @@ export default function MatchTrackerView({
     setMatches((prev) => prev.map(match => {
       if (match.id !== activeMatch.id) return match;
       const newStats = { ...match.stats };
-      newStats[scorerId] = { ...scorerStats, goals: newScorerGoals };
+      newStats[scorerId] = { ...scorerStats, goals: newScorerGoals, attempts: newScorerAttempts };
       if (assisterId) {
         newStats[assisterId] = { ...assisterStats, assists: newAssisterAssists };
       }
@@ -213,15 +238,43 @@ export default function MatchTrackerView({
     // Save directly to DB to avoid debounce cancellation
     // Helper to safely upsert
     const upsertSafe = async (pid, st) => {
-      await supabase.from('match_stats').upsert(
-        { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
-        { onConflict: 'match_id,player_id' }
-      );
+      const payload = {
+        match_id: activeMatch.id,
+        player_id: pid,
+        goals: st.goals,
+        assists: st.assists,
+        saves: st.saves || 0,
+        is_goalkeeper: st.is_goalkeeper || false
+      };
+      if (st.attempts !== undefined) payload.attempts = st.attempts;
+      if (st.defensive_contributions !== undefined) payload.defensive_contributions = st.defensive_contributions;
+
+      let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+      if (error && (error.message?.includes('column') || error.code === '42703')) {
+        await supabase.from('match_stats').upsert(
+          { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
+          { onConflict: 'match_id,player_id' }
+        );
+      }
     };
 
-    await upsertSafe(scorerId, { goals: newScorerGoals, assists: scorerStats.assists, saves: scorerStats.saves, is_goalkeeper: scorerStats.is_goalkeeper });
+    await upsertSafe(scorerId, {
+      goals: newScorerGoals,
+      assists: scorerStats.assists,
+      saves: scorerStats.saves,
+      is_goalkeeper: scorerStats.is_goalkeeper,
+      attempts: newScorerAttempts,
+      defensive_contributions: scorerStats.defensive_contributions || 0
+    });
     if (assisterId) {
-      await upsertSafe(assisterId, { goals: assisterStats.goals, assists: newAssisterAssists, saves: assisterStats.saves, is_goalkeeper: assisterStats.is_goalkeeper });
+      await upsertSafe(assisterId, {
+        goals: assisterStats.goals,
+        assists: newAssisterAssists,
+        saves: assisterStats.saves,
+        is_goalkeeper: assisterStats.is_goalkeeper,
+        attempts: assisterStats.attempts || 0,
+        defensive_contributions: assisterStats.defensive_contributions || 0
+      });
     }
 
     // Log the goal event in the database
@@ -265,7 +318,8 @@ export default function MatchTrackerView({
       const newStats = { ...match.stats };
       
       const pStats = newStats[playerId];
-      newStats[playerId] = { ...pStats, goals: Math.max(0, pStats.goals - 1) };
+      const newAttempts = showAttempts ? Math.max(0, (pStats.attempts || 0) - 1) : (pStats.attempts || 0);
+      newStats[playerId] = { ...pStats, goals: Math.max(0, pStats.goals - 1), attempts: newAttempts };
       
       if (eventToDelete && eventToDelete.assister_id) {
         const aStats = newStats[eventToDelete.assister_id];
@@ -281,13 +335,35 @@ export default function MatchTrackerView({
     saveMatchScoreToDb(activeMatch.id, newTeamGoals, m.opponent_goals);
     
     const upsertSafe = async (pid, st) => {
-      await supabase.from('match_stats').upsert(
-        { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
-        { onConflict: 'match_id,player_id' }
-      );
+      const payload = {
+        match_id: activeMatch.id,
+        player_id: pid,
+        goals: st.goals,
+        assists: st.assists,
+        saves: st.saves || 0,
+        is_goalkeeper: st.is_goalkeeper || false
+      };
+      if (st.attempts !== undefined) payload.attempts = st.attempts;
+      if (st.defensive_contributions !== undefined) payload.defensive_contributions = st.defensive_contributions;
+
+      let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+      if (error && (error.message?.includes('column') || error.code === '42703')) {
+        await supabase.from('match_stats').upsert(
+          { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
+          { onConflict: 'match_id,player_id' }
+        );
+      }
     };
 
-    await upsertSafe(playerId, { goals: Math.max(0, m.stats[playerId].goals - 1), assists: m.stats[playerId].assists, saves: m.stats[playerId].saves, is_goalkeeper: m.stats[playerId].is_goalkeeper });
+    const decAttempts = showAttempts ? Math.max(0, (m.stats[playerId]?.attempts || 0) - 1) : (m.stats[playerId]?.attempts || 0);
+    await upsertSafe(playerId, {
+      goals: Math.max(0, m.stats[playerId].goals - 1),
+      assists: m.stats[playerId].assists,
+      saves: m.stats[playerId].saves,
+      is_goalkeeper: m.stats[playerId].is_goalkeeper,
+      attempts: decAttempts,
+      defensive_contributions: m.stats[playerId]?.defensive_contributions || 0
+    });
 
     if (eventToDelete) {
       await supabase.from('goal_events').delete().eq('id', eventToDelete.id);
@@ -296,7 +372,14 @@ export default function MatchTrackerView({
       
       if (eventToDelete.assister_id && m.stats[eventToDelete.assister_id]) {
         const aStats = m.stats[eventToDelete.assister_id];
-        await upsertSafe(eventToDelete.assister_id, { goals: aStats.goals, assists: Math.max(0, aStats.assists - 1), saves: aStats.saves, is_goalkeeper: aStats.is_goalkeeper });
+        await upsertSafe(eventToDelete.assister_id, {
+          goals: aStats.goals,
+          assists: Math.max(0, aStats.assists - 1),
+          saves: aStats.saves,
+          is_goalkeeper: aStats.is_goalkeeper,
+          attempts: aStats.attempts || 0,
+          defensive_contributions: aStats.defensive_contributions || 0
+        });
       }
     }
   };
@@ -357,20 +440,48 @@ export default function MatchTrackerView({
 
         if (!isUnassigned && newStats[eventToDelete.scorer_id]) {
           const sStats = newStats[eventToDelete.scorer_id];
-          newStats[eventToDelete.scorer_id] = { ...sStats, goals: Math.max(0, sStats.goals - 1) };
-          await supabase.from('match_stats').upsert(
-            { match_id: activeMatch.id, player_id: eventToDelete.scorer_id, goals: newStats[eventToDelete.scorer_id].goals, assists: sStats.assists, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
-            { onConflict: 'match_id,player_id' }
-          );
+          const newAtt = showAttempts ? Math.max(0, (sStats.attempts || 0) - 1) : (sStats.attempts || 0);
+          newStats[eventToDelete.scorer_id] = { ...sStats, goals: Math.max(0, sStats.goals - 1), attempts: newAtt };
+          
+          const payload = {
+            match_id: activeMatch.id,
+            player_id: eventToDelete.scorer_id,
+            goals: newStats[eventToDelete.scorer_id].goals,
+            assists: sStats.assists,
+            saves: sStats.saves || 0,
+            is_goalkeeper: sStats.is_goalkeeper || false,
+            attempts: newAtt,
+            defensive_contributions: sStats.defensive_contributions || 0
+          };
+          let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+          if (error && (error.message?.includes('column') || error.code === '42703')) {
+            await supabase.from('match_stats').upsert(
+              { match_id: activeMatch.id, player_id: eventToDelete.scorer_id, goals: newStats[eventToDelete.scorer_id].goals, assists: sStats.assists, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
+              { onConflict: 'match_id,player_id' }
+            );
+          }
         }
 
         if (eventToDelete.assister_id && newStats[eventToDelete.assister_id]) {
           const aStats = newStats[eventToDelete.assister_id];
           newStats[eventToDelete.assister_id] = { ...aStats, assists: Math.max(0, aStats.assists - 1) };
-          await supabase.from('match_stats').upsert(
-            { match_id: activeMatch.id, player_id: eventToDelete.assister_id, goals: aStats.goals, assists: newStats[eventToDelete.assister_id].assists, saves: aStats.saves || 0, is_goalkeeper: aStats.is_goalkeeper || false },
-            { onConflict: 'match_id,player_id' }
-          );
+          const payload = {
+            match_id: activeMatch.id,
+            player_id: eventToDelete.assister_id,
+            goals: aStats.goals,
+            assists: newStats[eventToDelete.assister_id].assists,
+            saves: aStats.saves || 0,
+            is_goalkeeper: aStats.is_goalkeeper || false,
+            attempts: aStats.attempts || 0,
+            defensive_contributions: aStats.defensive_contributions || 0
+          };
+          let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+          if (error && (error.message?.includes('column') || error.code === '42703')) {
+            await supabase.from('match_stats').upsert(
+              { match_id: activeMatch.id, player_id: eventToDelete.assister_id, goals: aStats.goals, assists: newStats[eventToDelete.assister_id].assists, saves: aStats.saves || 0, is_goalkeeper: aStats.is_goalkeeper || false },
+              { onConflict: 'match_id,player_id' }
+            );
+          }
         }
 
         setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats, team_goals: newTeamGoals } : match)));
@@ -387,30 +498,59 @@ export default function MatchTrackerView({
     const m = matches.find((x) => x.id === activeMatch.id);
     if (!m) return;
 
-    const scorerStats = m.stats[scorerId] || { goals: 0, assists: 0, saves: 0 };
-    const assisterStats = assisterId ? (m.stats[assisterId] || { goals: 0, assists: 0, saves: 0 }) : null;
+    const scorerStats = m.stats[scorerId] || { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 };
+    const assisterStats = assisterId ? (m.stats[assisterId] || { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 }) : null;
 
     const newScorerGoals = scorerStats.goals + 1;
+    const newScorerAttempts = showAttempts ? (scorerStats.attempts || 0) + 1 : (scorerStats.attempts || 0);
     const newAssisterAssists = assisterStats ? assisterStats.assists + 1 : 0;
 
     const newStats = { ...m.stats };
-    newStats[scorerId] = { ...scorerStats, goals: newScorerGoals };
+    newStats[scorerId] = { ...scorerStats, goals: newScorerGoals, attempts: newScorerAttempts };
     if (assisterId) {
       newStats[assisterId] = { ...assisterStats, assists: newAssisterAssists };
     }
 
     setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats } : match)));
 
-    // Upsert player stats
-    await supabase.from('match_stats').upsert(
-      { match_id: activeMatch.id, player_id: scorerId, goals: newScorerGoals, assists: scorerStats.assists, saves: scorerStats.saves || 0, is_goalkeeper: scorerStats.is_goalkeeper || false },
-      { onConflict: 'match_id,player_id' }
-    );
+    // Upsert player stats with column fallback
+    const upsertAssign = async (pid, st) => {
+      const payload = {
+        match_id: activeMatch.id,
+        player_id: pid,
+        goals: st.goals,
+        assists: st.assists,
+        saves: st.saves || 0,
+        is_goalkeeper: st.is_goalkeeper || false,
+        attempts: st.attempts || 0,
+        defensive_contributions: st.defensive_contributions || 0
+      };
+      let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+      if (error && (error.message?.includes('column') || error.code === '42703')) {
+        await supabase.from('match_stats').upsert(
+          { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
+          { onConflict: 'match_id,player_id' }
+        );
+      }
+    };
+
+    await upsertAssign(scorerId, {
+      goals: newScorerGoals,
+      assists: scorerStats.assists,
+      saves: scorerStats.saves,
+      is_goalkeeper: scorerStats.is_goalkeeper,
+      attempts: newScorerAttempts,
+      defensive_contributions: scorerStats.defensive_contributions || 0
+    });
     if (assisterId) {
-      await supabase.from('match_stats').upsert(
-        { match_id: activeMatch.id, player_id: assisterId, goals: assisterStats.goals, assists: newAssisterAssists, saves: assisterStats.saves || 0, is_goalkeeper: assisterStats.is_goalkeeper || false },
-        { onConflict: 'match_id,player_id' }
-      );
+      await upsertAssign(assisterId, {
+        goals: assisterStats.goals,
+        assists: newAssisterAssists,
+        saves: assisterStats.saves,
+        is_goalkeeper: assisterStats.is_goalkeeper,
+        attempts: assisterStats.attempts || 0,
+        defensive_contributions: assisterStats.defensive_contributions || 0
+      });
     }
 
     // Update goal_event row
@@ -463,16 +603,22 @@ export default function MatchTrackerView({
       setPlayerToRemove({ id: playerId, name: pInfo ? pInfo.name : 'this player' });
     } else {
       // Add player
-      const initialPlayerStats = { goals: 0, assists: 0, saves: 0 };
+      const initialPlayerStats = { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 };
       const newStats = { ...activeMatch.stats, [playerId]: initialPlayerStats };
       
       setMatches((prev) => prev.map(m => m.id === activeMatch.id ? { ...m, stats: newStats } : m));
       
-      // Upsert default stats to database
-      await supabase.from('match_stats').upsert(
-        { match_id: activeMatch.id, player_id: playerId, goals: 0, assists: 0, saves: 0, is_goalkeeper: false },
+      // Upsert default stats to database with column fallback
+      let { error: amendErr } = await supabase.from('match_stats').upsert(
+        { match_id: activeMatch.id, player_id: playerId, goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0, is_goalkeeper: false },
         { onConflict: 'match_id,player_id' }
       );
+      if (amendErr && (amendErr.message?.includes('column') || amendErr.code === '42703')) {
+        await supabase.from('match_stats').upsert(
+          { match_id: activeMatch.id, player_id: playerId, goals: 0, assists: 0, saves: 0, is_goalkeeper: false },
+          { onConflict: 'match_id,player_id' }
+        );
+      }
     }
   };
 
@@ -498,6 +644,8 @@ export default function MatchTrackerView({
             goals: activeMatch.stats[pid]?.goals || 0,
             assists: activeMatch.stats[pid]?.assists || 0,
             saves: activeMatch.stats[pid]?.saves || 0,
+            attempts: activeMatch.stats[pid]?.attempts || 0,
+            defensive_contributions: activeMatch.stats[pid]?.defensive_contributions || 0,
             is_goalkeeper: activeMatch.stats[pid]?.is_goalkeeper || false
           };
         })
@@ -507,6 +655,9 @@ export default function MatchTrackerView({
   const totalGoals = playersInMatch.reduce((sum, p) => sum + p.goals, 0);
   const totalAssists = playersInMatch.reduce((sum, p) => sum + p.assists, 0);
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
+  const totalAttempts = playersInMatch.reduce((sum, p) => sum + p.attempts, 0);
+  const totalDC = playersInMatch.reduce((sum, p) => sum + p.defensive_contributions, 0);
+  const activeColsCount = 3 + (showAttempts ? 1 : 0) + (showDC ? 1 : 0);
 
   const timeline = computeTimelineWithScores(goalEvents, activeMatch.opponent, squad);
 
@@ -814,7 +965,10 @@ export default function MatchTrackerView({
                     )}
                   </div>
 
-                  <div className="stat-card-grid">
+                  <div
+                    className="stat-card-grid"
+                    style={{ gridTemplateColumns: `repeat(${activeColsCount}, minmax(0, 1fr))` }}
+                  >
                     {/* Goals Column */}
                     <div className="stat-col-cell">
                       <div className="stat-control-label goals">
@@ -838,6 +992,32 @@ export default function MatchTrackerView({
                         </button>
                       </div>
                     </div>
+
+                    {/* Attempts Column */}
+                    {showAttempts && (
+                      <div className="stat-col-cell">
+                        <div className="stat-control-label attempts">
+                          <Crosshair size={11} /> Att
+                        </div>
+                        <div className="stat-card-control">
+                          <button
+                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', -1)}
+                            className="btn-stat"
+                            aria-label={`Decrease attempts for ${player.name}`}
+                          >
+                            -
+                          </button>
+                          <span className="stat-value">{player.attempts}</span>
+                          <button
+                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', 1)}
+                            className="btn-stat-plus attempts"
+                            aria-label={`Add attempt for ${player.name}`}
+                          >
+                            <Plus size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Assists Column */}
                     <div className="stat-col-cell">
@@ -886,6 +1066,32 @@ export default function MatchTrackerView({
                         </button>
                       </div>
                     </div>
+
+                    {/* Defensive Contributions Column */}
+                    {showDC && (
+                      <div className="stat-col-cell">
+                        <div className="stat-control-label dc">
+                          <ShieldCheck size={11} /> DC
+                        </div>
+                        <div className="stat-card-control">
+                          <button
+                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1)}
+                            className="btn-stat"
+                            aria-label={`Decrease DC for ${player.name}`}
+                          >
+                            -
+                          </button>
+                          <span className="stat-value">{player.defensive_contributions}</span>
+                          <button
+                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1)}
+                            className="btn-stat-plus dc"
+                            aria-label={`Add DC for ${player.name}`}
+                          >
+                            <Plus size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -894,11 +1100,20 @@ export default function MatchTrackerView({
               {playersInMatch.length > 0 && (
                 <div className="stat-cards-totals">
                   <div className="stat-cards-totals-label">Match Totals</div>
-                  <div className="stat-cards-totals-grid">
+                  <div
+                    className="stat-cards-totals-grid"
+                    style={{ gridTemplateColumns: `repeat(${activeColsCount}, minmax(0, 1fr))` }}
+                  >
                     <div className="stat-card-total-box goals">
                       <span className="stat-card-total-num goals">{totalGoals}</span>
                       <span className="stat-card-total-title">Goals</span>
                     </div>
+                    {showAttempts && (
+                      <div className="stat-card-total-box attempts">
+                        <span className="stat-card-total-num attempts">{totalAttempts}</span>
+                        <span className="stat-card-total-title">Att</span>
+                      </div>
+                    )}
                     <div className="stat-card-total-box assists">
                       <span className="stat-card-total-num assists">{totalAssists}</span>
                       <span className="stat-card-total-title">Assists</span>
@@ -907,6 +1122,12 @@ export default function MatchTrackerView({
                       <span className="stat-card-total-num saves">{totalSaves}</span>
                       <span className="stat-card-total-title">Saves</span>
                     </div>
+                    {showDC && (
+                      <div className="stat-card-total-box dc">
+                        <span className="stat-card-total-num dc">{totalDC}</span>
+                        <span className="stat-card-total-title">DC</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -915,7 +1136,7 @@ export default function MatchTrackerView({
             /* =======================================
                Table Mode (Compact Single-Row View)
                ======================================= */
-            <div>
+            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
               <div className="stats-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
                   <span style={{ width: '32px', textAlign: 'center', fontSize: '0.65rem', color: 'var(--color-text-light)' }} title="Played in goal">GK?</span>
@@ -926,12 +1147,22 @@ export default function MatchTrackerView({
                   <div className="stat-col-header goals" title="Goals Scored">
                     <Target size={13} /> Goals
                   </div>
+                  {showAttempts && (
+                    <div className="stat-col-header attempts" title="Attempts at Goal">
+                      <Crosshair size={13} /> Att
+                    </div>
+                  )}
                   <div className="stat-col-header assists" title="Assists">
                     <Award size={13} /> Asts
                   </div>
                   <div className="stat-col-header saves" title="Goalkeeper Saves">
                     <Shield size={13} /> Saves
                   </div>
+                  {showDC && (
+                    <div className="stat-col-header dc" title="Defensive Contributions">
+                      <ShieldCheck size={13} /> DC
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -976,6 +1207,27 @@ export default function MatchTrackerView({
                       </button>
                     </div>
 
+                    {/* Attempts Counter */}
+                    {showAttempts && (
+                      <div className="stat-control-group">
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', -1)}
+                          className="btn-stat"
+                          aria-label={`Decrease attempts for ${player.name}`}
+                        >
+                          -
+                        </button>
+                        <span className="stat-value">{player.attempts}</span>
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'attempts', 1)}
+                          className="btn-stat-plus attempts"
+                          aria-label={`Add attempt for ${player.name}`}
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    )}
+
                     {/* Assists Counter */}
                     <div className="stat-control-group">
                       <button
@@ -1013,6 +1265,27 @@ export default function MatchTrackerView({
                         <Plus size={14} />
                       </button>
                     </div>
+
+                    {/* Defensive Contributions Counter */}
+                    {showDC && (
+                      <div className="stat-control-group">
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1)}
+                          className="btn-stat"
+                          aria-label={`Decrease DC for ${player.name}`}
+                        >
+                          -
+                        </button>
+                        <span className="stat-value">{player.defensive_contributions}</span>
+                        <button
+                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1)}
+                          className="btn-stat-plus dc"
+                          aria-label={`Add DC for ${player.name}`}
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1023,8 +1296,10 @@ export default function MatchTrackerView({
                   <span className="stat-totals-label">Totals</span>
                   <div className="stat-cols-3">
                     <div className="stat-total-cell goals">{totalGoals}</div>
+                    {showAttempts && <div className="stat-total-cell attempts">{totalAttempts}</div>}
                     <div className="stat-total-cell assists">{totalAssists}</div>
                     <div className="stat-total-cell saves">{totalSaves}</div>
+                    {showDC && <div className="stat-total-cell dc">{totalDC}</div>}
                   </div>
                 </div>
               )}
