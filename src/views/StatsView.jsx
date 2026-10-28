@@ -1279,7 +1279,7 @@ export default function StatsView({
                   <div className="dynamics-stat-value">
                     {goalDynamics.scoredFirstMatches > 0 ? (
                       <>
-                        <span style={{ color: 'var(--color-primary-dark)', fontWeight: 800 }}>
+                        <span style={{ color: 'var(--color-success-dark)', fontWeight: 800 }}>
                           {goalDynamics.scoredFirstWinRate}%
                         </span>
                         <span className="dynamics-stat-sub">Win Rate when 1-0 up</span>
@@ -1440,7 +1440,7 @@ export default function StatsView({
                     <div className="milestone-title">Match Scoring Record</div>
                     {milestones.maxSingleGameGoals > 0 ? (
                       <>
-                        <div className="milestone-value" style={{ color: 'var(--color-primary-dark)' }}>
+                        <div className="milestone-value" style={{ color: 'var(--color-stat-goals)' }}>
                           {milestones.maxSingleGameGoals} {milestones.maxSingleGameGoals === 1 ? 'Goal' : 'Goals'}
                         </div>
                         <div className="milestone-desc">
@@ -1559,7 +1559,7 @@ export default function StatsView({
                         </td>
                       )}
                       <td style={{ textAlign: 'center' }}>{p.appearances}</td>
-                      <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? '#ca5d03' : 'inherit' }}>
+                      <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? 'var(--color-stat-goals)' : 'inherit' }}>
                         {goalsDisplay}
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: hasAssists ? 700 : 400, color: hasAssists ? 'var(--color-secondary-dark)' : 'inherit' }}>

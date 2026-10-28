@@ -1,24 +1,28 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
 :root {
-  /* Color Palette */
-  --color-primary: #10b981; /* Emerald 500 */
-  --color-primary-dark: #059669; /* Emerald 600 */
-  --color-primary-light: #d1fae5; /* Emerald 100 */
+  /* Default Color Palette - Electric Cyan & Midnight Navy Theme */
+  --color-primary: #0284c7; /* Sky / Electric Cyan 600 */
+  --color-primary-dark: #0c4a6e; /* Sky 900 / Deep Midnight Navy */
+  --color-primary-light: #e0f2fe; /* Sky 100 */
   
   --color-secondary: #3b82f6; /* Blue 500 */
   --color-secondary-dark: #2563eb; /* Blue 600 */
   --color-secondary-light: #dbeafe; /* Blue 100 */
   
+  --color-success: #10b981; /* Emerald 500 */
+  --color-success-dark: #059669; /* Emerald 600 */
+  --color-success-light: #d1fae5; /* Emerald 100 */
+
   --color-danger: #ef4444; /* Red 500 */
   --color-danger-dark: #dc2626; /* Red 600 */
   
   /* Category / Stat Colors */
-  --color-stat-goals: var(--color-primary-dark);
+  --color-stat-goals: var(--color-success-dark);
   --color-stat-assists: var(--color-secondary-dark);
   --color-stat-involvements: #7c3aed; /* Electric Purple */
   --color-stat-saves: #b45309; /* Warm Amber */
-  --color-stat-clean-sheets: #0891b2; /* Crisp Teal/Cyan */
+  --color-stat-clean-sheets: #0d9488; /* Crisp Teal */
   
   --color-bg-body: #f8fafc; /* Slate 50 */
   --color-bg-card: #ffffff;
@@ -48,6 +52,18 @@
   
   /* Transitions */
   --transition-fast: 150ms ease-in-out;
+}
+
+[data-theme="cyan"] {
+  --color-primary: #0284c7; /* Sky / Electric Cyan 600 */
+  --color-primary-dark: #0c4a6e; /* Sky 900 / Deep Midnight Navy */
+  --color-primary-light: #e0f2fe; /* Sky 100 */
+}
+
+[data-theme="crimson"] {
+  --color-primary: #e11d48; /* Crimson 600 */
+  --color-primary-dark: #be123c; /* Deep Crimson 700 */
+  --color-primary-light: #ffe4e6; /* Rose 100 */
 }
 
 html {
@@ -232,8 +248,9 @@ body {
 }
 
 .text-gradient {
-  background: linear-gradient(to right, var(--color-primary-dark), var(--color-primary));
+  background: linear-gradient(135deg, #0f172a 20%, var(--color-primary) 100%);
   -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
   color: transparent;
 }
 
@@ -305,9 +322,9 @@ body {
 }
 
 .btn-primary {
-  background: linear-gradient(to right, var(--color-primary), var(--color-primary-dark));
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
   color: white;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 4px 12px rgba(225, 29, 72, 0.25);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -664,7 +681,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.stat-control-label.goals { color: var(--color-primary-dark); }
+.stat-control-label.goals { color: var(--color-stat-goals); }
 .stat-control-label.assists { color: var(--color-secondary-dark); }
 .stat-control-label.saves { color: #b45309; }
 
@@ -717,7 +734,7 @@ body {
   transform: scale(0.95);
 }
 
-.stat-card-control .btn-stat-plus.goals { background-color: var(--color-primary); }
+.stat-card-control .btn-stat-plus.goals { background-color: var(--color-success); }
 .stat-card-control .btn-stat-plus.assists { background-color: var(--color-secondary); }
 .stat-card-control .btn-stat-plus.saves { background-color: #f59e0b; }
 
@@ -765,7 +782,7 @@ body {
   align-items: center;
   justify-content: center;
 }
-.stat-card-total-box.goals { border-color: var(--color-primary-light); }
+.stat-card-total-box.goals { border-color: var(--color-success-light); }
 .stat-card-total-box.assists { border-color: var(--color-secondary-light); }
 .stat-card-total-box.saves { border-color: #fde68a; }
 
@@ -773,7 +790,7 @@ body {
   font-size: 1.15rem;
   font-weight: 900;
 }
-.stat-card-total-num.goals { color: var(--color-primary-dark); }
+.stat-card-total-num.goals { color: var(--color-stat-goals); }
 .stat-card-total-num.assists { color: var(--color-secondary-dark); }
 .stat-card-total-num.saves { color: #b45309; }
 
@@ -813,7 +830,7 @@ body {
   gap: 0.25rem;
   width: 72px;
 }
-.stat-col-header.goals { color: var(--color-primary-dark); }
+.stat-col-header.goals { color: var(--color-stat-goals); }
 .stat-col-header.assists { color: var(--color-secondary-dark); }
 .stat-col-header.saves { color: #b45309; }
 
@@ -895,7 +912,7 @@ body {
   cursor: pointer;
   box-shadow: var(--shadow-sm);
 }
-.btn-stat-plus.goals { background-color: var(--color-primary); }
+.btn-stat-plus.goals { background-color: var(--color-success); }
 .btn-stat-plus.assists { background-color: var(--color-secondary); }
 .btn-stat-plus.saves { background-color: #f59e0b; }
 
@@ -930,7 +947,7 @@ body {
   font-weight: 800;
   font-size: 0.875rem;
 }
-.stat-total-cell.goals { color: var(--color-primary-dark); }
+.stat-total-cell.goals { color: var(--color-stat-goals); }
 .stat-total-cell.assists { color: var(--color-secondary-dark); }
 .stat-total-cell.saves { color: #b45309; }
 
@@ -1011,9 +1028,9 @@ body {
   gap: 0.5rem;
 }
 
-.score-win { color: var(--color-primary-dark); }
+.score-win { color: var(--color-success-dark); }
 .score-loss { color: var(--color-danger-dark); }
-.score-draw { color: var(--color-text-muted); }
+.score-draw { color: #d97706; }
 
 .badge {
   display: inline-flex;
@@ -1328,8 +1345,8 @@ body {
   border: 1px solid #fca5a5;
 }
 .alert-success {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary-dark);
+  background-color: var(--color-success-light);
+  color: var(--color-success-dark);
   border: 1px solid #6ee7b7;
 }
 
@@ -1730,7 +1747,7 @@ body {
   border-color: var(--color-primary);
   color: #ffffff;
   font-weight: 700;
-  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 2px 4px rgba(225, 29, 72, 0.25);
 }
 
 /* Modal Overlay & Dialogs */
@@ -1868,9 +1885,9 @@ body {
 }
 
 .form-match-badge.win {
-  background-color: var(--color-primary-light);
+  background-color: var(--color-success-light);
   border-color: rgba(16, 185, 129, 0.35);
-  color: var(--color-primary-dark);
+  color: var(--color-success-dark);
 }
 
 .form-match-badge.draw {
@@ -1897,7 +1914,7 @@ body {
 }
 
 .form-match-badge.win .form-match-res-circle {
-  background-color: var(--color-primary-dark);
+  background-color: var(--color-success-dark);
   color: #ffffff;
 }
 
@@ -2052,9 +2069,9 @@ body {
 }
 
 .form-match-pill.has-cs {
-  background-color: #ecfeff;
+  background-color: #f0fdfa;
   color: var(--color-stat-clean-sheets);
-  border: 1px solid #a5f3fc;
+  border: 1px solid #99f6e4;
 }
 
 .form-match-pill.has-saves {
