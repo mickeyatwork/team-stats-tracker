@@ -9,6 +9,7 @@ import StatsView from './views/StatsView';
 import SettingsView from './views/SettingsView';
 import MatchReportView from './views/MatchReportView';
 import TournamentView from './views/TournamentView';
+import { FEATURE_KEYS, isFeatureEnabled } from './utils/featureFlags';
 
 export default function App() {
   // Auth State
@@ -66,10 +67,15 @@ export default function App() {
       if (teamError) console.error('Teams fetch error:', teamError);
 
       if (teamsData && teamsData.length > 0) {
-        setAllTeams(teamsData);
+        const enrichedTeams = teamsData.map((t) => ({
+          ...t,
+          [FEATURE_KEYS.MATCH_DYNAMICS]: isFeatureEnabled(t, FEATURE_KEYS.MATCH_DYNAMICS),
+          [FEATURE_KEYS.EFFICIENCY_RATING]: isFeatureEnabled(t, FEATURE_KEYS.EFFICIENCY_RATING)
+        }));
+        setAllTeams(enrichedTeams);
         // Default to first team if not already set or invalid
-        if (!teamInfo || !teamsData.some((t) => t.id === teamInfo.id)) {
-          setTeamInfo(teamsData[0]);
+        if (!teamInfo || !enrichedTeams.some((t) => t.id === teamInfo.id)) {
+          setTeamInfo(enrichedTeams[0]);
         }
       } else {
         setAllTeams([]);
