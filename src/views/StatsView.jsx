@@ -1211,6 +1211,29 @@ export default function StatsView({
               )}
             </div>
 
+            {/* Top Defensive Contributions (when enabled) */}
+            {showDC && (
+              <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('dc')} style={{ cursor: 'pointer', position: 'relative' }}>
+                <div className="leaderboard-box-title dc" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span><ShieldCheck size={16} /> Defensive Contributions</span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
+                </div>
+                {statsSummary.topDC.filter((p) => p.dc > 0).length === 0 ? (
+                  <div className="empty-sub">No defensive contributions yet</div>
+                ) : (
+                  statsSummary.topDC
+                    .filter((p) => p.dc > 0)
+                    .map((p, idx) => (
+                      <div key={p.id} className="leaderboard-row">
+                        <span className="rank">{idx + 1}.</span>
+                        <span className="p-name">{p.name}</span>
+                        <span className="p-score dc">{p.dc}</span>
+                      </div>
+                    ))
+                )}
+              </div>
+            )}
+
             {/* Top Saves */}
             <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('saves')} style={{ cursor: 'pointer', position: 'relative' }}>
               <div className="leaderboard-box-title saves" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1252,52 +1275,6 @@ export default function StatsView({
                   ))
               )}
             </div>
-
-            {/* Top Attempts (when enabled) */}
-            {showAttempts && (
-              <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('attempts')} style={{ cursor: 'pointer', position: 'relative' }}>
-                <div className="leaderboard-box-title attempts" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span><Crosshair size={16} /> Top Attempts</span>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
-                </div>
-                {statsSummary.topAttempts.filter((p) => p.attempts > 0).length === 0 ? (
-                  <div className="empty-sub">No attempts recorded yet</div>
-                ) : (
-                  statsSummary.topAttempts
-                    .filter((p) => p.attempts > 0)
-                    .map((p, idx) => (
-                      <div key={p.id} className="leaderboard-row">
-                        <span className="rank">{idx + 1}.</span>
-                        <span className="p-name">{p.name}</span>
-                        <span className="p-score attempts">{p.attempts}</span>
-                      </div>
-                    ))
-                )}
-              </div>
-            )}
-
-            {/* Top Defensive Contributions (when enabled) */}
-            {showDC && (
-              <div className="leaderboard-box" onClick={() => setExpandedLeaderboard('dc')} style={{ cursor: 'pointer', position: 'relative' }}>
-                <div className="leaderboard-box-title dc" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span><ShieldCheck size={16} /> Defensive Contributions</span>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>View All</span>
-                </div>
-                {statsSummary.topDC.filter((p) => p.dc > 0).length === 0 ? (
-                  <div className="empty-sub">No defensive contributions yet</div>
-                ) : (
-                  statsSummary.topDC
-                    .filter((p) => p.dc > 0)
-                    .map((p, idx) => (
-                      <div key={p.id} className="leaderboard-row">
-                        <span className="rank">{idx + 1}.</span>
-                        <span className="p-name">{p.name}</span>
-                        <span className="p-score dc">{p.dc}</span>
-                      </div>
-                    ))
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -1603,13 +1580,6 @@ export default function StatsView({
                       {tableMode === 'per_game' ? 'G/G' : 'Goals'} {renderSortIndicator('goals')}
                     </div>
                   </th>
-                  {showAttempts && (
-                    <th onClick={() => handleSort('attempts')} style={{ cursor: 'pointer', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {tableMode === 'per_game' ? 'Att/G' : 'Att'} {renderSortIndicator('attempts')}
-                      </div>
-                    </th>
-                  )}
                   <th onClick={() => handleSort('assists')} style={{ cursor: 'pointer', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {tableMode === 'per_game' ? 'A/G' : 'Asts'} {renderSortIndicator('assists')}
@@ -1644,6 +1614,13 @@ export default function StatsView({
                       CS {renderSortIndicator('cleanSheets')}
                     </div>
                   </th>
+                  {showAttempts && (
+                    <th onClick={() => handleSort('attempts')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {tableMode === 'per_game' ? 'Att/G' : 'Att'} {renderSortIndicator('attempts')}
+                      </div>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -1672,11 +1649,6 @@ export default function StatsView({
                       <td style={{ textAlign: 'center', fontWeight: hasGoals ? 700 : 400, color: hasGoals ? 'var(--color-stat-goals)' : 'inherit' }}>
                         {goalsDisplay}
                       </td>
-                      {showAttempts && (
-                        <td style={{ textAlign: 'center', fontWeight: hasAttempts ? 700 : 400, color: hasAttempts ? '#ea580c' : 'inherit' }}>
-                          {attemptsDisplay}
-                        </td>
-                      )}
                       <td style={{ textAlign: 'center', fontWeight: hasAssists ? 700 : 400, color: hasAssists ? 'var(--color-secondary-dark)' : 'inherit' }}>
                         {assistsDisplay}
                       </td>
@@ -1704,6 +1676,11 @@ export default function StatsView({
                       <td style={{ textAlign: 'center', fontWeight: p.cleanSheets > 0 ? 700 : 400, color: p.cleanSheets > 0 ? 'var(--color-stat-clean-sheets)' : 'inherit' }}>
                         {p.cleanSheets}
                       </td>
+                      {showAttempts && (
+                        <td style={{ textAlign: 'center', fontWeight: hasAttempts ? 700 : 400, color: hasAttempts ? '#ea580c' : 'inherit' }}>
+                          {attemptsDisplay}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
