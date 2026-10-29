@@ -20,7 +20,15 @@ import UserManagementTab from '../components/UserManagementTab';
 import ClubManagementModal from '../components/ClubManagementModal';
 import { supabase } from '../supabaseClient';
 import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
-import { FEATURE_KEYS, isFeatureEnabled, setFeatureFlag } from '../utils/featureFlags';
+import {
+  FEATURE_KEYS,
+  isFeatureEnabled,
+  setFeatureFlag,
+  DEFAULT_PERFORMANCE_WEIGHTS,
+  DEFAULT_MIN_FINISHER_ATTEMPTS,
+  getPerformanceWeights,
+  getMinFinisherAttempts
+} from '../utils/featureFlags';
 import { THEME_CONFIGS, getSavedTheme, applyTheme } from '../utils/themePreferences';
 import {
   isDevAdmin,
@@ -60,6 +68,9 @@ export default function SettingsView({
   const [efficiencyRatingInput, setEfficiencyRatingInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
   const [attemptsInput, setAttemptsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
   const [defensiveContributionsInput, setDefensiveContributionsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
+  const [performancePointsInput, setPerformancePointsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS));
+  const [minFinisherAttemptsInput, setMinFinisherAttemptsInput] = useState(() => getMinFinisherAttempts(teamInfo));
+  const [performanceWeightsInput, setPerformanceWeightsInput] = useState(() => getPerformanceWeights(teamInfo));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
 
@@ -101,6 +112,9 @@ export default function SettingsView({
       setEfficiencyRatingInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
       setAttemptsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
       setDefensiveContributionsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
+      setPerformancePointsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS));
+      setMinFinisherAttemptsInput(getMinFinisherAttempts(teamInfo));
+      setPerformanceWeightsInput(getPerformanceWeights(teamInfo));
     }
   }, [teamInfo]);
 
@@ -154,7 +168,10 @@ export default function SettingsView({
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
-        [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput
+        [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
+        [FEATURE_KEYS.PERFORMANCE_POINTS]: performancePointsInput,
+        min_finisher_attempts: Number(minFinisherAttemptsInput) || DEFAULT_MIN_FINISHER_ATTEMPTS,
+        performance_weights: performanceWeightsInput
       };
 
       // Try updating with settings JSONB column
@@ -182,6 +199,13 @@ export default function SettingsView({
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.EFFICIENCY_RATING, efficiencyRatingInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.ATTEMPTS, attemptsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS, defensiveContributionsInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.PERFORMANCE_POINTS, performancePointsInput);
+      try {
+        localStorage.setItem(`team_min_finisher_${teamInfo.id}`, String(minFinisherAttemptsInput));
+        localStorage.setItem(`team_perf_weights_${teamInfo.id}`, JSON.stringify(performanceWeightsInput));
+      } catch {
+        // fallback
+      }
 
       const updated = {
         ...teamInfo,
@@ -191,6 +215,7 @@ export default function SettingsView({
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
         [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
+        [FEATURE_KEYS.PERFORMANCE_POINTS]: performancePointsInput,
         settings: newSettings
       };
 
@@ -293,13 +318,13 @@ export default function SettingsView({
                 },
                 ...(showDevFeatures
                   ? [
-                      {
-                        id: 'features',
-                        label: 'Feature Switches',
-                        desc: 'Dev Admin analytics switches & dynamic metrics',
-                        icon: ToggleLeft
-                      }
-                    ]
+                    {
+                      id: 'features',
+                      label: 'Feature Switches',
+                      desc: 'Dev Admin analytics switches & dynamic metrics',
+                      icon: ToggleLeft
+                    }
+                  ]
                   : [])
               ].map((tab) => {
                 const Icon = tab.icon;
@@ -657,6 +682,24 @@ export default function SettingsView({
                   </button>
                 </div>
 
+                {/* Clinical Finisher Threshold (Only visible when Attempts feature is active) */}
+                {attemptsInput && (
+                  <div className="input-group" style={{ marginBottom: '1rem' }}>
+                    <label className="label">Clinical Finisher Min Attempts</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="50"
+                      className="input"
+                      value={minFinisherAttemptsInput}
+                      onChange={(e) => setMinFinisherAttemptsInput(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    />
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.25rem', display: 'block' }}>
+                      Minimum attempts on goal required to qualify for the Clinical Finisher honour (default: 3).
+                    </span>
+                  </div>
+                )}
+
                 {teamStatus.error && <div className="alert alert-danger">{teamStatus.error}</div>}
                 {teamStatus.success && <div className="alert alert-success">{teamStatus.success}</div>}
 
@@ -1001,6 +1044,147 @@ export default function SettingsView({
                   />
                 </button>
               </div>
+
+              {/* Player Performance Rating (Points) Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '1rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Player Performance Rating (Points)</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Calculate a balanced match impact score weighting goals, assists, clean sheets, saves, and defensive contributions
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPerformancePointsInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: performancePointsInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: performancePointsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Dev Admin Point Weights Panel (Only visible when feature is enabled) */}
+              {performancePointsInput && (
+                <div
+                  style={{
+                    padding: '1rem',
+                    background: 'var(--color-bg-body)',
+                    borderRadius: 'var(--radius-lg)',
+                    border: '1px solid var(--color-border)',
+                    marginBottom: '1rem'
+                  }}
+                >
+                  <div className="flex-between mb-2">
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
+                      Performance Point Weights
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPerformanceWeightsInput({ ...DEFAULT_PERFORMANCE_WEIGHTS })}
+                      className="btn btn-secondary"
+                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}
+                    >
+                      Reset Defaults
+                    </button>
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                    Customize the impact points awarded per match event.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="label" style={{ fontSize: '0.75rem' }}>Goal</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        className="input"
+                        value={performanceWeightsInput.goal}
+                        onChange={(e) => setPerformanceWeightsInput((prev) => ({ ...prev, goal: parseFloat(e.target.value) || 0 }))}
+                        style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="label" style={{ fontSize: '0.75rem' }}>Assist</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        className="input"
+                        value={performanceWeightsInput.assist}
+                        onChange={(e) => setPerformanceWeightsInput((prev) => ({ ...prev, assist: parseFloat(e.target.value) || 0 }))}
+                        style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="label" style={{ fontSize: '0.75rem' }}>Clean Sheet</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        className="input"
+                        value={performanceWeightsInput.cleanSheet}
+                        onChange={(e) => setPerformanceWeightsInput((prev) => ({ ...prev, cleanSheet: parseFloat(e.target.value) || 0 }))}
+                        style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="label" style={{ fontSize: '0.75rem' }}>Save</label>
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        className="input"
+                        value={performanceWeightsInput.save}
+                        onChange={(e) => setPerformanceWeightsInput((prev) => ({ ...prev, save: parseFloat(e.target.value) || 0 }))}
+                        style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="label" style={{ fontSize: '0.75rem' }}>DefCon (DC)</label>
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        className="input"
+                        value={performanceWeightsInput.defcon}
+                        onChange={(e) => setPerformanceWeightsInput((prev) => ({ ...prev, defcon: parseFloat(e.target.value) || 0 }))}
+                        style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {teamStatus.error && <div className="alert alert-danger">{teamStatus.error}</div>}
               {teamStatus.success && <div className="alert alert-success">{teamStatus.success}</div>}
