@@ -4,7 +4,7 @@ import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents, generateMissingTimelineEvents } from '../utils/timelineUtils';
 import { parseTournament } from '../utils/tournamentUtils';
-import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
+import { FEATURE_KEYS, isFeatureEnabled, getPerformanceWeights } from '../utils/featureFlags';
 
 export default function MatchReportView({
   activeMatch,
@@ -63,21 +63,35 @@ export default function MatchReportView({
 
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
+  const showPerformancePoints = isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS);
+  const perfWeights = getPerformanceWeights(teamInfo);
+  const isCleanSheet = activeMatch.opponent_goals === 0 && !activeMatch.hide_score;
 
   const playersInMatch = activeMatch.stats
     ? Object.keys(activeMatch.stats)
         .map((pid) => {
           const pInfo = squad.find((s) => s.id === pid);
+          const pStat = activeMatch.stats[pid] || {};
+          const csPoints = (pStat.is_goalkeeper && isCleanSheet) ? perfWeights.cleanSheet : 0;
+          const matchPoints = Number((
+            ((pStat.goals || 0) * perfWeights.goal) +
+            ((pStat.assists || 0) * perfWeights.assist) +
+            csPoints +
+            ((pStat.saves || 0) * perfWeights.save) +
+            ((pStat.defensive_contributions || 0) * perfWeights.defcon)
+          ).toFixed(1));
+
           return {
             id: pid,
             name: pInfo ? pInfo.name : 'Unknown Player',
             position: pInfo ? pInfo.position : '',
-            goals: activeMatch.stats[pid]?.goals || 0,
-            assists: activeMatch.stats[pid]?.assists || 0,
-            saves: activeMatch.stats[pid]?.saves || 0,
-            attempts: activeMatch.stats[pid]?.attempts || 0,
-            defensive_contributions: activeMatch.stats[pid]?.defensive_contributions || 0,
-            is_goalkeeper: activeMatch.stats[pid]?.is_goalkeeper || false
+            goals: pStat.goals || 0,
+            assists: pStat.assists || 0,
+            saves: pStat.saves || 0,
+            attempts: pStat.attempts || 0,
+            defensive_contributions: pStat.defensive_contributions || 0,
+            is_goalkeeper: pStat.is_goalkeeper || false,
+            matchPoints
           };
         })
         .sort((a, b) => {
@@ -93,6 +107,10 @@ export default function MatchReportView({
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
   const totalAttempts = playersInMatch.reduce((sum, p) => sum + p.attempts, 0);
   const totalDC = playersInMatch.reduce((sum, p) => sum + p.defensive_contributions, 0);
+  const totalMatchPoints = playersInMatch.reduce((sum, p) => sum + p.matchPoints, 0);
+  const matchMVP = showPerformancePoints && playersInMatch.length > 0 && Math.max(...playersInMatch.map((p) => p.matchPoints)) > 0
+    ? [...playersInMatch].sort((a, b) => b.matchPoints - a.matchPoints || b.goals - a.goals)[0]
+    : null;
 
   const isWin = activeMatch.team_goals > activeMatch.opponent_goals;
   const isLoss = activeMatch.team_goals < activeMatch.opponent_goals;
@@ -902,9 +920,27 @@ export default function MatchReportView({
 
         {/* Player stats table */}
         <div className="card">
-          <h3 className="title-md" style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
-            Player Performances
-          </h3>
+          <div className="flex-between" style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h3 className="title-md" style={{ margin: 0 }}>
+              Player Performances
+            </h3>
+            {matchMVP && (
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                padding: '0.25rem 0.65rem',
+                borderRadius: '999px',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid #10b981',
+                color: '#10b981',
+                fontSize: '0.75rem',
+                fontWeight: 700
+              }}>
+                <Sparkles size={13} /> Match MVP: {matchMVP.name} ({matchMVP.matchPoints} pts)
+              </div>
+            )}
+          </div>
           {playersInMatch.length > 0 ? (
             <div style={{ overflowX: 'auto' }}>
               <table className="stats-table">
@@ -921,6 +957,9 @@ export default function MatchReportView({
                     <th style={{ textAlign: 'center' }}><Shield size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> S</th>
                     {showDC && (
                       <th style={{ textAlign: 'center' }}><ShieldCheck size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> DC</th>
+                    )}
+                    {showPerformancePoints && (
+                      <th style={{ textAlign: 'center' }}>Pts</th>
                     )}
                   </tr>
                 </thead>
@@ -956,6 +995,9 @@ export default function MatchReportView({
                       {showDC && (
                         <td style={{ textAlign: 'center', fontWeight: p.defensive_contributions > 0 ? 600 : 400, color: p.defensive_contributions > 0 ? '#0891b2' : 'inherit' }}>{p.defensive_contributions}</td>
                       )}
+                      {showPerformancePoints && (
+                        <td style={{ textAlign: 'center', fontWeight: 700, color: '#10b981' }}>{p.matchPoints}</td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -968,6 +1010,7 @@ export default function MatchReportView({
                     <td style={{ textAlign: 'center' }}>{totalGoals + totalAssists}</td>
                     <td style={{ textAlign: 'center' }}>{totalSaves}</td>
                     {showDC && <td style={{ textAlign: 'center', color: '#0891b2' }}>{totalDC}</td>}
+                    {showPerformancePoints && <td style={{ textAlign: 'center', fontWeight: 800, color: '#10b981' }}>{totalMatchPoints.toFixed(1)}</td>}
                   </tr>
                 </tfoot>
               </table>

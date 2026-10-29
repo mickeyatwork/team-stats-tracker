@@ -1,7 +1,12 @@
 import { useState, useMemo, Fragment } from 'react';
 import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Crosshair, ShieldCheck } from 'lucide-react';
 import TopNav from '../components/TopNav';
-import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
+import {
+  FEATURE_KEYS,
+  isFeatureEnabled,
+  getPerformanceWeights,
+  getMinFinisherAttempts
+} from '../utils/featureFlags';
 
 export default function StatsView({
   matches,
@@ -20,12 +25,15 @@ export default function StatsView({
   const showEfficiencyRating = isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING);
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
+  const showPerformancePoints = isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS);
+  const perfWeights = getPerformanceWeights(teamInfo);
+  const minFinisherAttempts = getMinFinisherAttempts(teamInfo);
 
   // Sort state for squad breakdown table
   const [sortField, setSortField] = useState('ga'); // default sort by G+A
   const [sortDirection, setSortDirection] = useState('desc'); // default descending
   const [tableMode, setTableMode] = useState('totals'); // 'totals' | 'per_game'
-  
+
   // Recent Form state (window: 3 or 5 games)
   const [formWindow, setFormWindow] = useState(3);
   const [formSortField, setFormSortField] = useState('ga');
@@ -107,6 +115,7 @@ export default function StatsView({
         assists: 0,
         saves: 0,
         attempts: 0,
+        goalsInAttemptGames: 0,
         dc: 0,
         cleanSheets: 0,
         gamesContributed: 0
@@ -138,23 +147,30 @@ export default function StatsView({
               assists: 0,
               saves: 0,
               attempts: 0,
+              goalsInAttemptGames: 0,
               dc: 0,
               cleanSheets: 0,
               gamesContributed: 0
             };
           }
           const pStat = m.stats[pid];
+          const pAttempts = pStat.attempts || 0;
           playerAgg[pid].appearances += 1;
           playerAgg[pid].goals += pStat.goals || 0;
           playerAgg[pid].assists += pStat.assists || 0;
           playerAgg[pid].saves += pStat.saves || 0;
-          playerAgg[pid].attempts += pStat.attempts || 0;
+          playerAgg[pid].attempts += pAttempts;
           playerAgg[pid].dc += pStat.defensive_contributions || 0;
+
+          // Only count goals in matches where attempts were recorded for this player
+          if (pAttempts > 0) {
+            playerAgg[pid].goalsInAttemptGames = (playerAgg[pid].goalsInAttemptGames || 0) + Math.min(pStat.goals || 0, pAttempts);
+          }
 
           if ((pStat.goals || 0) > 0 || (pStat.assists || 0) > 0) {
             playerAgg[pid].gamesContributed += 1;
           }
-          
+
           if (pStat.is_goalkeeper && m.opponent_goals === 0 && !m.hide_score) {
             playerAgg[pid].cleanSheets += 1;
           }
@@ -170,6 +186,15 @@ export default function StatsView({
       const attemptsPerGame = p.appearances > 0 ? p.attempts / p.appearances : 0;
       const dcPerGame = p.appearances > 0 ? p.dc / p.appearances : 0;
       const consistencyRate = p.appearances > 0 ? Math.round((p.gamesContributed / p.appearances) * 100) : 0;
+      const conversionRate = (p.attempts > 0 && p.goalsInAttemptGames) ? Math.round(((p.goalsInAttemptGames || 0) / p.attempts) * 100) : 0;
+      const performancePoints = Number((
+        (p.goals * perfWeights.goal) +
+        (p.assists * perfWeights.assist) +
+        (p.cleanSheets * perfWeights.cleanSheet) +
+        (p.saves * perfWeights.save) +
+        (p.dc * perfWeights.defcon)
+      ).toFixed(1));
+      const pointsPerGame = p.appearances > 0 ? Number((performancePoints / p.appearances).toFixed(2)) : 0;
       return {
         ...p,
         gPerGame,
@@ -178,16 +203,19 @@ export default function StatsView({
         savesPerGame,
         attemptsPerGame,
         dcPerGame,
-        consistencyRate
+        consistencyRate,
+        conversionRate,
+        performancePoints,
+        pointsPerGame
       };
     });
 
     const fullScorers = [...playerList].sort((a, b) => b.goals - a.goals || b.appearances - a.appearances);
     const topScorers = fullScorers.slice(0, 3);
-    
+
     const fullAssists = [...playerList].sort((a, b) => b.assists - a.assists || b.appearances - a.appearances);
     const topAssists = fullAssists.slice(0, 3);
-    
+
     const fullSaves = [...playerList].sort((a, b) => b.saves - a.saves || b.appearances - a.appearances);
     const topSaves = fullSaves.slice(0, 3);
 
@@ -196,10 +224,10 @@ export default function StatsView({
 
     const fullDC = [...playerList].sort((a, b) => b.dc - a.dc || b.appearances - a.appearances);
     const topDC = fullDC.slice(0, 3);
-    
+
     const fullCleanSheets = [...playerList].sort((a, b) => b.cleanSheets - a.cleanSheets || b.appearances - a.appearances);
     const topCleanSheets = fullCleanSheets.slice(0, 3);
-    
+
     const fullInvolvements = [...playerList].sort((a, b) => (b.goals + b.assists) - (a.goals + a.assists) || b.appearances - a.appearances);
     const topInvolvements = fullInvolvements.slice(0, 3);
 
@@ -231,7 +259,7 @@ export default function StatsView({
       fullCleanSheets,
       fullInvolvements
     };
-  }, [filteredMatches, squad]);
+  }, [filteredMatches, squad, perfWeights]);
 
   const { topCombinations, fullCombinations } = useMemo(() => {
     const combos = {};
@@ -295,6 +323,19 @@ export default function StatsView({
         case 'attempts':
           valA = tableMode === 'per_game' ? a.attemptsPerGame : a.attempts;
           valB = tableMode === 'per_game' ? b.attemptsPerGame : b.attempts;
+          break;
+        case 'conversion':
+          valA = a.conversionRate;
+          valB = b.conversionRate;
+          if (valA !== valB) {
+            return sortDirection === 'asc' ? valA - valB : valB - valA;
+          }
+          valA = a.goals;
+          valB = b.goals;
+          break;
+        case 'points':
+          valA = tableMode === 'per_game' ? a.pointsPerGame : a.performancePoints;
+          valB = tableMode === 'per_game' ? b.pointsPerGame : b.performancePoints;
           break;
         case 'dc':
           valA = tableMode === 'per_game' ? a.dcPerGame : a.dc;
@@ -476,12 +517,12 @@ export default function StatsView({
       });
     });
 
-    const scoredFirstWinRate = scoredFirstMatches > 0 
-      ? Math.round((scoredFirstWins / scoredFirstMatches) * 100) 
+    const scoredFirstWinRate = scoredFirstMatches > 0
+      ? Math.round((scoredFirstWins / scoredFirstMatches) * 100)
       : 0;
 
-    const assistedPercent = totalTeamGoalsWithEvents > 0 
-      ? Math.round((assistedGoalsCount / totalTeamGoalsWithEvents) * 100) 
+    const assistedPercent = totalTeamGoalsWithEvents > 0
+      ? Math.round((assistedGoalsCount / totalTeamGoalsWithEvents) * 100)
       : 0;
 
     const topIcebreakers = Object.entries(openingScorers)
@@ -525,6 +566,41 @@ export default function StatsView({
     const topConsistencyRate = reliablePool.length > 0 ? reliablePool[0].consistencyRate : 0;
     const reliableLeaders = reliablePool.filter((p) => p.consistencyRate === topConsistencyRate);
 
+    // Clinical Finisher (Top Conversion % with minimum attempts threshold)
+    // Only counts goals in matches where the player had attempts recorded
+    const qualifiedFinishers = statsSummary.playerList
+      .filter((p) => p.attempts >= minFinisherAttempts && p.goalsInAttemptGames > 0)
+      .sort((a, b) => b.conversionRate - a.conversionRate || b.goalsInAttemptGames - a.goalsInAttemptGames || a.attempts - b.attempts);
+
+    const anyScoredFinishers = statsSummary.playerList
+      .filter((p) => p.attempts > 0 && p.goalsInAttemptGames > 0)
+      .sort((a, b) => b.conversionRate - a.conversionRate || b.goalsInAttemptGames - a.goalsInAttemptGames || a.attempts - b.attempts);
+
+    const attemptFinishers = statsSummary.playerList
+      .filter((p) => p.attempts >= minFinisherAttempts)
+      .sort((a, b) => b.conversionRate - a.conversionRate || b.attempts - a.attempts);
+
+    const anyAttemptFinishers = statsSummary.playerList
+      .filter((p) => p.attempts > 0)
+      .sort((a, b) => b.conversionRate - a.conversionRate || b.attempts - a.attempts);
+
+    const eligibleFinishers = qualifiedFinishers.length > 0
+      ? qualifiedFinishers
+      : (anyScoredFinishers.length > 0
+        ? anyScoredFinishers
+        : (attemptFinishers.length > 0 ? attemptFinishers : anyAttemptFinishers));
+
+    const topConversion = eligibleFinishers.length > 0 ? eligibleFinishers[0].conversionRate : 0;
+    const finisherLeaders = eligibleFinishers.filter((p) => p.conversionRate === topConversion);
+
+    // Impact Leader / MVP (Top Performance Points)
+    const eligibleImpact = [...statsSummary.playerList]
+      .filter((p) => p.performancePoints > 0)
+      .sort((a, b) => b.performancePoints - a.performancePoints || b.appearances - a.appearances);
+
+    const topPoints = eligibleImpact.length > 0 ? eligibleImpact[0].performancePoints : 0;
+    const impactLeaders = eligibleImpact.filter((p) => p.performancePoints === topPoints);
+
     return {
       scoredFirstMatches,
       scoredFirstWins,
@@ -540,9 +616,11 @@ export default function StatsView({
       soloLeaders,
       topDistributors,
       distributorLeaders,
-      reliableLeaders
+      reliableLeaders,
+      finisherLeaders,
+      impactLeaders
     };
-  }, [filteredMatches, goalEvents, squad, statsSummary.playerList]);
+  }, [filteredMatches, goalEvents, squad, statsSummary.playerList, minFinisherAttempts]);
 
   // ==========================================
   // Recent Form Calculation
@@ -1343,7 +1421,7 @@ export default function StatsView({
 
               <div className="dynamics-grid">
                 {/* Scoring First Card */}
-                <div className="dynamics-stat-box">
+                <div className="dynamics-stat-box" title="Team win percentage when scoring the opening goal of a match">
                   <div className="dynamics-stat-label">Scoring First Record</div>
                   <div className="dynamics-stat-value">
                     {goalDynamics.scoredFirstMatches > 0 ? (
@@ -1365,7 +1443,7 @@ export default function StatsView({
                 </div>
 
                 {/* Icebreaker King */}
-                <div className="dynamics-stat-box">
+                <div className="dynamics-stat-box" title="Player who has scored the first goal of a match the most times">
                   <div className="dynamics-stat-label">The "Icebreaker" King</div>
                   {goalDynamics.icebreakerLeaders.length > 0 ? (
                     <>
@@ -1382,7 +1460,7 @@ export default function StatsView({
                 </div>
 
                 {/* Solo Specialist */}
-                <div className="dynamics-stat-box">
+                <div className="dynamics-stat-box" title="Player with the most individual goals scored without an assist">
                   <div className="dynamics-stat-label">The "Solo Specialist"</div>
                   {goalDynamics.soloLeaders.length > 0 ? (
                     <>
@@ -1399,7 +1477,7 @@ export default function StatsView({
                 </div>
 
                 {/* Ultimate Distributor */}
-                <div className="dynamics-stat-box">
+                <div className="dynamics-stat-box" title="Player who has provided assists to the highest number of distinct teammates">
                   <div className="dynamics-stat-label">The "Ultimate Distributor"</div>
                   {goalDynamics.distributorLeaders.length > 0 ? (
                     <>
@@ -1417,7 +1495,7 @@ export default function StatsView({
 
                 {/* Mr. Reliable (Efficiency Leader) */}
                 {showEfficiencyRating && (
-                  <div className="dynamics-stat-box">
+                  <div className="dynamics-stat-box" title="Player with the highest percentage of matches where they contributed at least 1 goal or assist">
                     <div className="dynamics-stat-label">"Mr. Reliable" (Efficiency)</div>
                     {goalDynamics.reliableLeaders.length > 0 ? (
                       <>
@@ -1434,6 +1512,52 @@ export default function StatsView({
                       </>
                     ) : (
                       <div className="dynamics-stat-empty">No contributions yet</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Clinical Finisher */}
+                {showAttempts && (
+                  <div className="dynamics-stat-box" title={`Player with the highest shot conversion percentage in matches where attempts were recorded (min. ${minFinisherAttempts} attempts)`}>
+                    <div className="dynamics-stat-label">"Clinical Finisher" (Shot Conv.)</div>
+                    {goalDynamics.finisherLeaders?.length > 0 ? (
+                      <>
+                        <div className="dynamics-stat-value" style={{ color: '#ea580c' }}>
+                          {goalDynamics.finisherLeaders.map((p) => p.name).join(', ')}
+                        </div>
+                        <div className="dynamics-stat-footnote">
+                          {goalDynamics.finisherLeaders[0].conversionRate}% conversion
+                          {goalDynamics.finisherLeaders.every((p) => p.goalsInAttemptGames === goalDynamics.finisherLeaders[0].goalsInAttemptGames && p.attempts === goalDynamics.finisherLeaders[0].attempts)
+                            ? ` (${goalDynamics.finisherLeaders[0].goalsInAttemptGames} ${goalDynamics.finisherLeaders[0].goalsInAttemptGames === 1 ? 'goal' : 'goals'} from ${goalDynamics.finisherLeaders[0].attempts} attempts)`
+                            : ` (${goalDynamics.finisherLeaders.map((p) => `${p.name}: ${p.goalsInAttemptGames}/${p.attempts}`).join(', ')})`
+                          }
+                        </div>
+                      </>
+                    ) : (
+                      <div className="dynamics-stat-empty">No attempts recorded yet</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Impact Leader / MVP */}
+                {showPerformancePoints && (
+                  <div className="dynamics-stat-box" title="Player with the highest overall performance score based on weighted match events (goals, assists, clean sheets, saves, DC)">
+                    <div className="dynamics-stat-label">"Impact Leader" (MVP Rating)</div>
+                    {goalDynamics.impactLeaders?.length > 0 ? (
+                      <>
+                        <div className="dynamics-stat-value" style={{ color: '#10b981' }}>
+                          {goalDynamics.impactLeaders.map((p) => p.name).join(', ')}
+                        </div>
+                        <div className="dynamics-stat-footnote">
+                          {goalDynamics.impactLeaders[0].performancePoints} total pts
+                          {goalDynamics.impactLeaders.every((p) => p.performancePoints === goalDynamics.impactLeaders[0].performancePoints)
+                            ? ` (${goalDynamics.impactLeaders[0].goals}G, ${goalDynamics.impactLeaders[0].assists}A, ${goalDynamics.impactLeaders[0].dc}DC, ${goalDynamics.impactLeaders[0].saves}S)`
+                            : ` (${goalDynamics.impactLeaders.map((p) => `${p.name}: ${p.performancePoints} pts`).join(', ')})`
+                          }
+                        </div>
+                      </>
+                    ) : (
+                      <div className="dynamics-stat-empty">No performance points recorded</div>
                     )}
                   </div>
                 )}
@@ -1570,22 +1694,22 @@ export default function StatsView({
                       </div>
                     </th>
                   )}
-                  <th onClick={() => handleSort('appearances')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <th onClick={() => handleSort('appearances')} style={{ cursor: 'pointer', textAlign: 'center' }} title="Appearances: Total matches played">
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       Apps {renderSortIndicator('appearances')}
                     </div>
                   </th>
-                  <th onClick={() => handleSort('goals')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <th onClick={() => handleSort('goals')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Goals scored per match played' : 'Total goals scored'}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {tableMode === 'per_game' ? 'G/G' : 'Goals'} {renderSortIndicator('goals')}
                     </div>
                   </th>
-                  <th onClick={() => handleSort('assists')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <th onClick={() => handleSort('assists')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Goal assists per match played' : 'Total goal assists'}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {tableMode === 'per_game' ? 'A/G' : 'Asts'} {renderSortIndicator('assists')}
                     </div>
                   </th>
-                  <th onClick={() => handleSort('ga')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <th onClick={() => handleSort('ga')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Goal involvements (Goals + Assists) per match played' : 'Total goal involvements (Goals + Assists)'}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {tableMode === 'per_game' ? 'G+A/G' : 'G+A'} {renderSortIndicator('ga')}
                     </div>
@@ -1593,31 +1717,45 @@ export default function StatsView({
                   {showEfficiencyRating && (
                     <th onClick={() => handleSort('efficiency')} style={{ cursor: 'pointer', textAlign: 'center' }} title="Efficiency / Match Involvement: % of games played with at least 1 goal or assist">
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {tableMode === 'per_game' ? 'Eff %' : 'Involv %'} {renderSortIndicator('efficiency')}
+                        {tableMode === 'per_game' ? 'Eff' : 'Involv'} {renderSortIndicator('efficiency')}
                       </div>
                     </th>
                   )}
-                  <th onClick={() => handleSort('saves')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <th onClick={() => handleSort('saves')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Goalkeeper saves per match played' : 'Total goalkeeper saves'}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {tableMode === 'per_game' ? 'Saves/G' : 'Saves'} {renderSortIndicator('saves')}
                     </div>
                   </th>
                   {showDC && (
-                    <th onClick={() => handleSort('dc')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                    <th onClick={() => handleSort('dc')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Defensive contributions (tackles, interceptions, clearances) per match played' : 'Total defensive contributions (tackles, interceptions, clearances)'}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {tableMode === 'per_game' ? 'DC/G' : 'DC'} {renderSortIndicator('dc')}
                       </div>
                     </th>
                   )}
-                  <th onClick={() => handleSort('cleanSheets')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <th onClick={() => handleSort('cleanSheets')} style={{ cursor: 'pointer', textAlign: 'center' }} title="Clean sheets: Matches played as goalkeeper with 0 goals conceded">
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap' }}>
                       CS {renderSortIndicator('cleanSheets')}
                     </div>
                   </th>
                   {showAttempts && (
-                    <th onClick={() => handleSort('attempts')} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                    <>
+                      <th onClick={() => handleSort('attempts')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Attempts at goal per match played' : 'Total attempts at goal (shots)'}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {tableMode === 'per_game' ? 'Att/G' : 'Att'} {renderSortIndicator('attempts')}
+                        </div>
+                      </th>
+                      <th onClick={() => handleSort('conversion')} style={{ cursor: 'pointer', textAlign: 'center' }} title="Shot Conversion % (Goals in attempt games / Total attempts)">
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          Conv {renderSortIndicator('conversion')}
+                        </div>
+                      </th>
+                    </>
+                  )}
+                  {showPerformancePoints && (
+                    <th onClick={() => handleSort('points')} style={{ cursor: 'pointer', textAlign: 'center' }} title={tableMode === 'per_game' ? 'Performance points per match played' : 'Performance points: Weighted match impact score'}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {tableMode === 'per_game' ? 'Att/G' : 'Att'} {renderSortIndicator('attempts')}
+                        {tableMode === 'per_game' ? 'Pts/G' : 'Pts'} {renderSortIndicator('points')}
                       </div>
                     </th>
                   )}
@@ -1677,8 +1815,18 @@ export default function StatsView({
                         {p.cleanSheets}
                       </td>
                       {showAttempts && (
-                        <td style={{ textAlign: 'center', fontWeight: hasAttempts ? 700 : 400, color: hasAttempts ? '#ea580c' : 'inherit' }}>
-                          {attemptsDisplay}
+                        <>
+                          <td style={{ textAlign: 'center', fontWeight: hasAttempts ? 700 : 400, color: hasAttempts ? '#ea580c' : 'inherit' }}>
+                            {attemptsDisplay}
+                          </td>
+                          <td style={{ textAlign: 'center', fontWeight: p.conversionRate > 0 ? 700 : 400, color: p.conversionRate >= 30 ? '#10b981' : 'inherit' }}>
+                            {p.attempts > 0 ? `${p.conversionRate}%` : '-'}
+                          </td>
+                        </>
+                      )}
+                      {showPerformancePoints && (
+                        <td style={{ textAlign: 'center', fontWeight: 800, color: '#10b981' }}>
+                          {tableMode === 'per_game' ? p.pointsPerGame.toFixed(2) : p.performancePoints}
                         </td>
                       )}
                     </tr>
@@ -1686,7 +1834,7 @@ export default function StatsView({
                 })}
                 {sortedPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={(teamInfo.hide_positions ? 7 : 8) + (showEfficiencyRating ? 1 : 0) + (showAttempts ? 1 : 0) + (showDC ? 1 : 0)} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+                    <td colSpan={(teamInfo.hide_positions ? 7 : 8) + (showEfficiencyRating ? 1 : 0) + (showAttempts ? 2 : 0) + (showDC ? 1 : 0) + (showPerformancePoints ? 1 : 0)} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
                       No squad stats available yet.
                     </td>
                   </tr>
@@ -1699,7 +1847,7 @@ export default function StatsView({
 
       {/* Expanded Leaderboard Modal */}
       {expandedLeaderboard && (
-        <div 
+        <div
           style={{
             position: 'fixed',
             top: 0, left: 0, right: 0, bottom: 0,
@@ -1712,7 +1860,7 @@ export default function StatsView({
           }}
           onClick={() => setExpandedLeaderboard(null)}
         >
-          <div 
+          <div
             className="card"
             style={{
               width: '100%',
@@ -1725,7 +1873,7 @@ export default function StatsView({
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <button 
+            <button
               onClick={() => setExpandedLeaderboard(null)}
               style={{
                 position: 'absolute',
@@ -1756,7 +1904,7 @@ export default function StatsView({
               {expandedLeaderboard === 'cleanSheets' && <><Shield size={20} color="var(--color-stat-clean-sheets)" /> <span style={{ color: 'var(--color-stat-clean-sheets)' }}>Top Clean Sheets</span></>}
               {expandedLeaderboard === 'combinations' && <><Heart size={20} color="var(--color-primary-dark)" /> <span style={{ color: 'var(--color-primary-dark)' }}>Top Combinations</span></>}
             </h3>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {(() => {
                 if (expandedLeaderboard === 'combinations') {
@@ -1805,21 +1953,21 @@ export default function StatsView({
                 else if (expandedLeaderboard === 'saves') { list = statsSummary.fullSaves.filter(p => p.saves > 0); metric = 'saves'; color = 'saves'; }
                 else if (expandedLeaderboard === 'dc') { list = statsSummary.fullDC.filter(p => p.dc > 0); metric = 'dc'; color = 'dc'; }
                 else if (expandedLeaderboard === 'cleanSheets') { list = statsSummary.fullCleanSheets.filter(p => p.cleanSheets > 0); metric = 'cleanSheets'; color = 'cleanSheets'; }
-                
+
                 if (list.length === 0) return <div className="empty-sub">No stats recorded yet</div>;
-                
+
                 return list.map((p, idx) => (
                   <div key={p.id} className="leaderboard-row" style={{ padding: '0.75rem', borderBottom: '1px solid var(--color-border-light)', borderRadius: 0, marginBottom: 0 }}>
                     <span className="rank">{idx + 1}.</span>
                     <span className="p-name">{p.name}</span>
                     <span className={`p-score ${color}`}>
                       {metric === 'goals' ? p.goals :
-                       metric === 'attempts' ? p.attempts :
-                       metric === 'assists' ? p.assists :
-                       metric === 'saves' ? p.saves :
-                       metric === 'dc' ? p.dc :
-                       metric === 'cleanSheets' ? p.cleanSheets :
-                       (p.goals + p.assists)}
+                        metric === 'attempts' ? p.attempts :
+                          metric === 'assists' ? p.assists :
+                            metric === 'saves' ? p.saves :
+                              metric === 'dc' ? p.dc :
+                                metric === 'cleanSheets' ? p.cleanSheets :
+                                  (p.goals + p.assists)}
                     </span>
                   </div>
                 ));
