@@ -10,7 +10,9 @@ export const FEATURE_KEYS = {
   EFFICIENCY_RATING: 'enable_efficiency_rating',
   ATTEMPTS: 'enable_attempts',
   DEFENSIVE_CONTRIBUTIONS: 'enable_defensive_contributions',
-  PERFORMANCE_POINTS: 'enable_performance_points'
+  PERFORMANCE_POINTS: 'enable_performance_points',
+  PLAYER_OF_THE_MATCH: 'enable_player_of_the_match',
+  CAPTAIN: 'enable_captain'
 };
 
 export const DEFAULT_FEATURE_STATE = {
@@ -18,7 +20,9 @@ export const DEFAULT_FEATURE_STATE = {
   [FEATURE_KEYS.EFFICIENCY_RATING]: true,
   [FEATURE_KEYS.ATTEMPTS]: false,
   [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: false,
-  [FEATURE_KEYS.PERFORMANCE_POINTS]: false
+  [FEATURE_KEYS.PERFORMANCE_POINTS]: false,
+  [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: false,
+  [FEATURE_KEYS.CAPTAIN]: false
 };
 
 export const DEFAULT_PERFORMANCE_WEIGHTS = {
@@ -150,6 +154,8 @@ export const getTeamFeatures = (teamInfo) => {
     [FEATURE_KEYS.EFFICIENCY_RATING]: isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING),
     [FEATURE_KEYS.ATTEMPTS]: isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS),
     [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS),
-    [FEATURE_KEYS.PERFORMANCE_POINTS]: isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS)
+    [FEATURE_KEYS.PERFORMANCE_POINTS]: isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS),
+    [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH),
+    [FEATURE_KEYS.CAPTAIN]: isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN)
   };
 };

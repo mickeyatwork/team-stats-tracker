@@ -178,6 +178,31 @@ export function getTrackerHiddenColumns(teamInfo) {
   return [];
 }
 
+export function getSavedMatchRoles(matchId) {
+  if (!matchId) return { captains: [], potm: [] };
+  const prefs = readLocalCache();
+  const roles = prefs.match_roles?.[matchId];
+  return {
+    captains: Array.isArray(roles?.captains) ? roles.captains : [],
+    potm: Array.isArray(roles?.potm) ? roles.potm : []
+  };
+}
+
+export function saveMatchRoleSelection(matchId, roleKey, playerIds) {
+  if (!matchId) return;
+  const prefs = readLocalCache();
+  const existingMatchRoles = prefs.match_roles || {};
+  const currentForMatch = existingMatchRoles[matchId] || { captains: [], potm: [] };
+  const updatedMatchRoles = {
+    ...existingMatchRoles,
+    [matchId]: {
+      ...currentForMatch,
+      [roleKey]: playerIds
+    }
+  };
+  saveUserPreferences({ match_roles: updatedMatchRoles });
+}
+
 export function subscribeToUserPreferences(callback) {
   if (typeof window === 'undefined') return () => {};
   const handler = (e) => callback(e.detail || readLocalCache());

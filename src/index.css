@@ -953,6 +953,36 @@ body {
   align-items: center;
 }
 
+.badge-captain-mini {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+  background-color: #0f172a;
+  color: #ffffff;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge-potm-mini {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+  background-color: #d97706;
+  color: #ffffff;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .stat-control-group {
   display: flex;
   align-items: center;
@@ -1037,20 +1067,13 @@ body {
 .stat-total-cell.saves { color: #b45309; }
 .stat-total-cell.dc { color: #0891b2; }
 
-/* Match Tracker Actions Bar (Goalkeeper & Quick Record DC) */
+/* Match Tracker Actions Bar (Goalkeeper, Captain, POTM & Quick Record DC) */
 .tracker-actions-bar {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
   margin-top: 0.75rem;
   margin-bottom: 0.25rem;
-}
-
-@media (min-width: 640px) {
-  .tracker-actions-bar {
-    flex-direction: row;
-    align-items: stretch;
-  }
 }
 
 .btn-action-tracker {
@@ -1083,6 +1106,14 @@ body {
 
 .btn-action-gk:hover {
   border-color: #b45309;
+}
+
+.btn-action-captain:hover {
+  border-color: #0f172a;
+}
+
+.btn-action-potm:hover {
+  border-color: #d97706;
 }
 
 .btn-action-dc {
@@ -1124,6 +1155,18 @@ body {
   background-color: rgba(245, 158, 11, 0.2);
   color: #fbbf24;
   border-color: rgba(245, 158, 11, 0.3);
+}
+
+.btn-action-badge.captain {
+  background-color: #0f172a;
+  color: #ffffff;
+  border: 1px solid #0f172a;
+}
+
+.btn-action-badge.potm {
+  background-color: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+  border: 1px solid rgba(217, 119, 6, 0.28);
 }
 
 .btn-action-badge.dc {
@@ -2014,18 +2057,6 @@ body {
   min-width: 44px;
   text-align: center;
   flex-shrink: 0;
-}
-
-.timeline-score.team-lead {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary-dark);
-  border-color: var(--color-primary);
-}
-
-.timeline-score.opp-lead {
-  background-color: #fee2e2;
-  color: var(--color-danger);
-  border-color: #fca5a5;
 }
 
 .timeline-content {

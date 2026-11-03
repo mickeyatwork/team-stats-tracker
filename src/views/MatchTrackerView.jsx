@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical } from 'lucide-react';
+import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
@@ -9,6 +9,8 @@ import {
   DEFAULT_COLUMN_ORDER,
   getTrackerColumnOrder,
   getTrackerHiddenColumns,
+  getSavedMatchRoles,
+  saveMatchRoleSelection,
   saveUserPreferences,
   subscribeToUserPreferences
 } from '../utils/userPreferences';
@@ -47,6 +49,8 @@ export default function MatchTrackerView({
     return localStorage.getItem('matchTrackerViewMode') || 'table';
   });
   const [showGkDialog, setShowGkDialog] = useState(false);
+  const [showCaptainDialog, setShowCaptainDialog] = useState(false);
+  const [showPotmDialog, setShowPotmDialog] = useState(false);
   const [showDCDialog, setShowDCDialog] = useState(false);
   const [justTappedDCId, setJustTappedDCId] = useState(null);
   const [columnOrder, setColumnOrder] = useState(() => getTrackerColumnOrder(teamInfo));
@@ -57,6 +61,8 @@ export default function MatchTrackerView({
 
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
+  const showPotm = isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH);
+  const showCaptain = isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN);
 
   useEffect(() => {
     setColumnOrder(getTrackerColumnOrder(teamInfo));
@@ -175,8 +181,8 @@ export default function MatchTrackerView({
     }
   };
 
-  // Autosave Player Stats (Goals, Assists, Saves, Attempts, DC, GK status)
-  const savePlayerStatToDb = useDebounceCallback(async (matchId, playerId, goals, assists, saves, is_goalkeeper, attempts, defensive_contributions) => {
+  // Autosave Player Stats (Goals, Assists, Saves, Attempts, DC, GK, Captain, POTM status)
+  const savePlayerStatToDb = useDebounceCallback(async (matchId, playerId, goals, assists, saves, is_goalkeeper, attempts, defensive_contributions, is_captain, is_potm) => {
     const payload = {
       match_id: matchId,
       player_id: playerId,
@@ -187,14 +193,31 @@ export default function MatchTrackerView({
     };
     if (attempts !== undefined) payload.attempts = attempts;
     if (defensive_contributions !== undefined) payload.defensive_contributions = defensive_contributions;
+    if (is_captain !== undefined) payload.is_captain = is_captain;
+    if (is_potm !== undefined) payload.is_potm = is_potm;
 
     let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
-    if (error && (error.message?.includes('column') || error.code === '42703')) {
-      const fallback = await supabase.from('match_stats').upsert(
-        { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
-        { onConflict: 'match_id,player_id' }
-      );
-      if (fallback.error) console.error('Error saving player stat (fallback):', fallback.error);
+    if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
+      const secondaryPayload = {
+        match_id: matchId,
+        player_id: playerId,
+        goals,
+        assists,
+        saves,
+        is_goalkeeper
+      };
+      if (attempts !== undefined) secondaryPayload.attempts = attempts;
+      if (defensive_contributions !== undefined) secondaryPayload.defensive_contributions = defensive_contributions;
+      const retry = await supabase.from('match_stats').upsert(secondaryPayload, { onConflict: 'match_id,player_id' });
+      if (retry.error && (retry.error.message?.includes('column') || retry.error.code === '42703' || retry.error.code === 'PGRST204')) {
+        const fallback = await supabase.from('match_stats').upsert(
+          { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
+          { onConflict: 'match_id,player_id' }
+        );
+        if (fallback.error) console.error('Error saving player stat (fallback):', fallback.error);
+      } else if (retry.error) {
+        console.error('Error saving player stat (retry):', retry.error);
+      }
     } else if (error) {
       console.error('Error saving player stat:', error);
     }
@@ -228,7 +251,9 @@ export default function MatchTrackerView({
     const att = stat === 'attempts' ? newVal : m.stats[playerId]?.attempts || 0;
     const dc = stat === 'defensive_contributions' ? newVal : m.stats[playerId]?.defensive_contributions || 0;
     const isGk = stat === 'is_goalkeeper' ? newVal : m.stats[playerId]?.is_goalkeeper || false;
-    savePlayerStatToDb(matchId, playerId, g, a, s, isGk, att, dc);
+    const isCap = m.stats[playerId]?.is_captain || false;
+    const isPotm = m.stats[playerId]?.is_potm || false;
+    savePlayerStatToDb(matchId, playerId, g, a, s, isGk, att, dc, isCap, isPotm);
   };
 
   const toggleGoalkeeper = (matchId, playerId) => {
@@ -258,7 +283,85 @@ export default function MatchTrackerView({
     const s = m.stats[playerId]?.saves || 0;
     const att = m.stats[playerId]?.attempts || 0;
     const dc = m.stats[playerId]?.defensive_contributions || 0;
-    savePlayerStatToDb(matchId, playerId, g, a, s, newVal, att, dc);
+    const isCap = m.stats[playerId]?.is_captain || false;
+    const isPotm = m.stats[playerId]?.is_potm || false;
+    savePlayerStatToDb(matchId, playerId, g, a, s, newVal, att, dc, isCap, isPotm);
+  };
+
+  const toggleCaptain = (matchId, playerId) => {
+    const m = matches.find((x) => x.id === matchId);
+    if (!m) return;
+    const savedRoles = getSavedMatchRoles(matchId);
+    const currentIsCaptain = m.stats[playerId]?.is_captain ?? savedRoles.captains.includes(playerId);
+    const newVal = !currentIsCaptain;
+
+    const updatedStats = { ...m.stats };
+    updatedStats[playerId] = {
+      ...updatedStats[playerId],
+      is_captain: newVal
+    };
+
+    setMatches(
+      matches.map((match) => {
+        if (match.id !== matchId) return match;
+        return {
+          ...match,
+          stats: updatedStats
+        };
+      })
+    );
+
+    const nextCaptains = Object.keys(updatedStats).filter(
+      (pid) => updatedStats[pid]?.is_captain ?? (pid !== playerId && savedRoles.captains.includes(pid))
+    );
+    saveMatchRoleSelection(matchId, 'captains', nextCaptains);
+
+    const g = m.stats[playerId]?.goals || 0;
+    const a = m.stats[playerId]?.assists || 0;
+    const s = m.stats[playerId]?.saves || 0;
+    const isGk = m.stats[playerId]?.is_goalkeeper || false;
+    const att = m.stats[playerId]?.attempts || 0;
+    const dc = m.stats[playerId]?.defensive_contributions || 0;
+    const isPotm = m.stats[playerId]?.is_potm ?? savedRoles.potm.includes(playerId);
+    savePlayerStatToDb(matchId, playerId, g, a, s, isGk, att, dc, newVal, isPotm);
+  };
+
+  const togglePotm = (matchId, playerId) => {
+    const m = matches.find((x) => x.id === matchId);
+    if (!m) return;
+    const savedRoles = getSavedMatchRoles(matchId);
+    const currentIsPotm = m.stats[playerId]?.is_potm ?? savedRoles.potm.includes(playerId);
+    const newVal = !currentIsPotm;
+
+    const updatedStats = { ...m.stats };
+    updatedStats[playerId] = {
+      ...updatedStats[playerId],
+      is_potm: newVal
+    };
+
+    setMatches(
+      matches.map((match) => {
+        if (match.id !== matchId) return match;
+        return {
+          ...match,
+          stats: updatedStats
+        };
+      })
+    );
+
+    const nextPotm = Object.keys(updatedStats).filter(
+      (pid) => updatedStats[pid]?.is_potm ?? (pid !== playerId && savedRoles.potm.includes(pid))
+    );
+    saveMatchRoleSelection(matchId, 'potm', nextPotm);
+
+    const g = m.stats[playerId]?.goals || 0;
+    const a = m.stats[playerId]?.assists || 0;
+    const s = m.stats[playerId]?.saves || 0;
+    const isGk = m.stats[playerId]?.is_goalkeeper || false;
+    const att = m.stats[playerId]?.attempts || 0;
+    const dc = m.stats[playerId]?.defensive_contributions || 0;
+    const isCap = m.stats[playerId]?.is_captain ?? savedRoles.captains.includes(playerId);
+    savePlayerStatToDb(matchId, playerId, g, a, s, isGk, att, dc, isCap, newVal);
   };
 
   const handleAddGoalClick = (playerId) => {
@@ -809,6 +912,8 @@ export default function MatchTrackerView({
 
   if (!activeMatch) return null;
 
+  const savedRoles = getSavedMatchRoles(activeMatch.id);
+
   const playersInMatch = activeMatch.stats
     ? Object.keys(activeMatch.stats)
         .map((pid) => {
@@ -822,13 +927,17 @@ export default function MatchTrackerView({
             saves: activeMatch.stats[pid]?.saves || 0,
             attempts: activeMatch.stats[pid]?.attempts || 0,
             defensive_contributions: activeMatch.stats[pid]?.defensive_contributions || 0,
-            is_goalkeeper: activeMatch.stats[pid]?.is_goalkeeper || false
+            is_goalkeeper: activeMatch.stats[pid]?.is_goalkeeper || false,
+            is_captain: activeMatch.stats[pid]?.is_captain ?? savedRoles.captains.includes(pid),
+            is_potm: activeMatch.stats[pid]?.is_potm ?? savedRoles.potm.includes(pid)
           };
         })
         .sort((a, b) => a.name.localeCompare(b.name))
     : [];
 
   const goalkeepers = playersInMatch.filter((p) => p.is_goalkeeper);
+  const captains = playersInMatch.filter((p) => p.is_captain);
+  const potmPlayers = playersInMatch.filter((p) => p.is_potm);
   const totalGoals = playersInMatch.reduce((sum, p) => sum + p.goals, 0);
   const totalAssists = playersInMatch.reduce((sum, p) => sum + p.assists, 0);
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
@@ -1118,7 +1227,7 @@ export default function MatchTrackerView({
                       ) : (
                         <span className="timeline-order">#{goal.orderNumber}</span>
                       )}
-                      <span className={`timeline-score ${goal.teamScoreAfter > goal.oppScoreAfter ? 'team-lead' : goal.oppScoreAfter > goal.teamScoreAfter ? 'opp-lead' : ''}`}>
+                      <span className="timeline-score">
                         {goal.scoreFormatted}
                       </span>
 
@@ -1215,6 +1324,38 @@ export default function MatchTrackerView({
             </span>
           </button>
 
+          {showCaptain && (
+            <button
+              type="button"
+              onClick={() => setShowCaptainDialog(true)}
+              className="btn-action-tracker btn-action-captain"
+              title="Select Match Captain"
+            >
+              <span className="btn-action-title">Captain</span>
+              <span className="btn-action-badge captain">
+                {captains.length > 0
+                  ? captains.map((c) => c.name).join(', ')
+                  : 'None assigned'}
+              </span>
+            </button>
+          )}
+
+          {showPotm && (
+            <button
+              type="button"
+              onClick={() => setShowPotmDialog(true)}
+              className="btn-action-tracker btn-action-potm"
+              title="Select Player of the Match"
+            >
+              <span className="btn-action-title">Player of the Match</span>
+              <span className="btn-action-badge potm">
+                {potmPlayers.length > 0
+                  ? potmPlayers.map((p) => p.name).join(', ')
+                  : 'None selected'}
+              </span>
+            </button>
+          )}
+
           {showDC && (
             <button
               type="button"
@@ -1302,6 +1443,12 @@ export default function MatchTrackerView({
                       <span className="stat-card-name">{player.name}</span>
                       {player.is_goalkeeper && (
                         <span className="badge-gk-mini" title="Goalkeeper">GK</span>
+                      )}
+                      {showCaptain && player.is_captain && (
+                        <span className="badge-captain-mini" title="Captain">C</span>
+                      )}
+                      {showPotm && player.is_potm && (
+                        <span className="badge-potm-mini" title="Player of the Match">★ POTM</span>
                       )}
                     </div>
                     {!teamInfo.hide_positions && player.position && (
@@ -1417,6 +1564,12 @@ export default function MatchTrackerView({
                         <span className="stat-player-name">{player.name}</span>
                         {player.is_goalkeeper && (
                           <span className="badge-gk-mini" title="Goalkeeper">GK</span>
+                        )}
+                        {showCaptain && player.is_captain && (
+                          <span className="badge-captain-mini" title="Captain">C</span>
+                        )}
+                        {showPotm && player.is_potm && (
+                          <span className="badge-potm-mini" title="Player of the Match">★</span>
                         )}
                       </div>
                       {!teamInfo.hide_positions && player.position && (
@@ -1939,6 +2092,206 @@ export default function MatchTrackerView({
               </div>
 
               <button onClick={() => setShowGkDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Assign Captain Modal */}
+        {showCaptain && showCaptainDialog && (
+          <div className="modal-overlay" onClick={() => setShowCaptainDialog(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="flex-between mb-3">
+                <h3 className="title-md" style={{ marginBottom: 0 }}>Match Captain</h3>
+                <button onClick={() => setShowCaptainDialog(false)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Select the captain for this match. Selected player(s) will display the captain&apos;s armband (C) icon on the tracker.
+              </p>
+
+              <div style={{ maxHeight: '55vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingRight: '0.2rem' }}>
+                {playersInMatch.map((player) => {
+                  const isCap = !!player.is_captain;
+                  return (
+                    <div
+                      key={player.id}
+                      onClick={() => toggleCaptain(activeMatch.id, player.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0.7rem 0.85rem',
+                        cursor: 'pointer',
+                        background: isCap ? 'rgba(15, 23, 42, 0.08)' : 'var(--color-bg-card)',
+                        border: `1.5px solid ${isCap ? '#0f172a' : 'var(--color-border-light)'}`,
+                        borderRadius: 'var(--radius-xl)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                        <div
+                          className="avatar"
+                          style={{
+                            background: isCap ? '#0f172a' : 'var(--color-border-light)',
+                            color: isCap ? '#ffffff' : 'var(--color-text-muted)',
+                            width: '2.2rem',
+                            height: '2.2rem',
+                            fontWeight: 700,
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          {isCap ? 'C' : player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text-main)' }}>
+                            {player.name}
+                          </div>
+                          {!teamInfo.hide_positions && player.position && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+                              {player.position}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        {isCap ? (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#ffffff',
+                            backgroundColor: '#0f172a',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 'var(--radius-full)'
+                          }}>
+                            <Check size={13} /> Captain
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: 'var(--color-text-light)',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 'var(--radius-full)',
+                            border: '1px solid var(--color-border)'
+                          }}>
+                            Assign
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setShowCaptainDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Select Player of the Match Modal */}
+        {showPotm && showPotmDialog && (
+          <div className="modal-overlay" onClick={() => setShowPotmDialog(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="flex-between mb-3">
+                <h3 className="title-md" style={{ marginBottom: 0 }}>Player of the Match</h3>
+                <button onClick={() => setShowPotmDialog(false)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Select the standout Player of the Match.
+              </p>
+
+              <div style={{ maxHeight: '55vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingRight: '0.2rem' }}>
+                {playersInMatch.map((player) => {
+                  const isPotm = !!player.is_potm;
+                  return (
+                    <div
+                      key={player.id}
+                      onClick={() => togglePotm(activeMatch.id, player.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0.7rem 0.85rem',
+                        cursor: 'pointer',
+                        background: isPotm ? 'rgba(217, 119, 6, 0.12)' : 'var(--color-bg-card)',
+                        border: `1.5px solid ${isPotm ? '#d97706' : 'var(--color-border-light)'}`,
+                        borderRadius: 'var(--radius-xl)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                        <div
+                          className="avatar"
+                          style={{
+                            background: isPotm ? '#d97706' : 'var(--color-border-light)',
+                            color: isPotm ? '#ffffff' : 'var(--color-text-muted)',
+                            width: '2.2rem',
+                            height: '2.2rem',
+                            fontWeight: 700,
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          {isPotm ? <Star size={14} fill="currentColor" /> : player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem', color: isPotm ? '#b45309' : 'var(--color-text-main)' }}>
+                            {player.name}
+                          </div>
+                          {!teamInfo.hide_positions && player.position && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+                              {player.position}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        {isPotm ? (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#ffffff',
+                            backgroundColor: '#d97706',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 'var(--radius-full)'
+                          }}>
+                            <Check size={13} /> POTM
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: 'var(--color-text-light)',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 'var(--radius-full)',
+                            border: '1px solid var(--color-border)'
+                          }}>
+                            Select
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setShowPotmDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
                 Done
               </button>
             </div>

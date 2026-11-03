@@ -69,6 +69,8 @@ export default function SettingsView({
   const [attemptsInput, setAttemptsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
   const [defensiveContributionsInput, setDefensiveContributionsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
   const [performancePointsInput, setPerformancePointsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS));
+  const [playerOfTheMatchInput, setPlayerOfTheMatchInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH));
+  const [captainInput, setCaptainInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN));
   const [minFinisherAttemptsInput, setMinFinisherAttemptsInput] = useState(() => getMinFinisherAttempts(teamInfo));
   const [performanceWeightsInput, setPerformanceWeightsInput] = useState(() => getPerformanceWeights(teamInfo));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
@@ -113,6 +115,8 @@ export default function SettingsView({
       setAttemptsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
       setDefensiveContributionsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
       setPerformancePointsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS));
+      setPlayerOfTheMatchInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH));
+      setCaptainInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN));
       setMinFinisherAttemptsInput(getMinFinisherAttempts(teamInfo));
       setPerformanceWeightsInput(getPerformanceWeights(teamInfo));
     }
@@ -164,12 +168,14 @@ export default function SettingsView({
     setTeamStatus({ loading: true, success: null, error: null });
     try {
       const newSettings = {
-        ...(teamInfo.settings || {}),
+        ...teamInfo.settings,
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
         [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
         [FEATURE_KEYS.PERFORMANCE_POINTS]: performancePointsInput,
+        [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: playerOfTheMatchInput,
+        [FEATURE_KEYS.CAPTAIN]: captainInput,
         min_finisher_attempts: Number(minFinisherAttemptsInput) || DEFAULT_MIN_FINISHER_ATTEMPTS,
         performance_weights: performanceWeightsInput
       };
@@ -200,6 +206,8 @@ export default function SettingsView({
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.ATTEMPTS, attemptsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS, defensiveContributionsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.PERFORMANCE_POINTS, performancePointsInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.PLAYER_OF_THE_MATCH, playerOfTheMatchInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.CAPTAIN, captainInput);
       try {
         localStorage.setItem(`team_min_finisher_${teamInfo.id}`, String(minFinisherAttemptsInput));
         localStorage.setItem(`team_perf_weights_${teamInfo.id}`, JSON.stringify(performanceWeightsInput));
@@ -216,6 +224,8 @@ export default function SettingsView({
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
         [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
         [FEATURE_KEYS.PERFORMANCE_POINTS]: performancePointsInput,
+        [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: playerOfTheMatchInput,
+        [FEATURE_KEYS.CAPTAIN]: captainInput,
         settings: newSettings
       };
 
@@ -1005,7 +1015,7 @@ export default function SettingsView({
                   padding: '0.75rem 1rem',
                   background: 'var(--color-border-light)',
                   borderRadius: 'var(--radius-lg)',
-                  marginBottom: '1rem'
+                  marginBottom: '0.75rem'
                 }}
               >
                 <div style={{ paddingRight: '1rem' }}>
@@ -1034,6 +1044,104 @@ export default function SettingsView({
                       position: 'absolute',
                       top: '0.2rem',
                       left: defensiveContributionsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Player of the Match Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.75rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Player of the Match</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Allow selecting a standout Player of the Match on the match tracker and displaying it on match reports
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPlayerOfTheMatchInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: playerOfTheMatchInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: playerOfTheMatchInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Captain Selection Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.75rem'
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Captain Selection</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Select a match captain and display a captain&apos;s armband (C) icon next to their name on the tracker
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCaptainInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    background: captainInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: captainInput ? 'calc(100% - 1.35rem)' : '0.2rem',
                       width: '1.35rem',
                       height: '1.35rem',
                       background: 'white',

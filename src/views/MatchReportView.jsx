@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2, Crosshair, ShieldCheck } from 'lucide-react';
+import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2, Crosshair, ShieldCheck, Star } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents, generateMissingTimelineEvents } from '../utils/timelineUtils';
 import { parseTournament } from '../utils/tournamentUtils';
 import { FEATURE_KEYS, isFeatureEnabled, getPerformanceWeights } from '../utils/featureFlags';
+import { getSavedMatchRoles } from '../utils/userPreferences';
 
 export default function MatchReportView({
   activeMatch,
@@ -64,8 +65,11 @@ export default function MatchReportView({
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
   const showPerformancePoints = isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS);
+  const showPotm = isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH);
+  const showCaptain = isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN);
   const perfWeights = getPerformanceWeights(teamInfo);
   const isCleanSheet = activeMatch.opponent_goals === 0 && !activeMatch.hide_score;
+  const savedRoles = getSavedMatchRoles(activeMatch.id);
 
   const playersInMatch = activeMatch.stats
     ? Object.keys(activeMatch.stats)
@@ -91,6 +95,8 @@ export default function MatchReportView({
             attempts: pStat.attempts || 0,
             defensive_contributions: pStat.defensive_contributions || 0,
             is_goalkeeper: pStat.is_goalkeeper || false,
+            is_captain: pStat.is_captain ?? savedRoles.captains.includes(pid),
+            is_potm: pStat.is_potm ?? savedRoles.potm.includes(pid),
             matchPoints
           };
         })
@@ -108,7 +114,8 @@ export default function MatchReportView({
   const totalAttempts = playersInMatch.reduce((sum, p) => sum + p.attempts, 0);
   const totalDC = playersInMatch.reduce((sum, p) => sum + p.defensive_contributions, 0);
   const totalMatchPoints = playersInMatch.reduce((sum, p) => sum + p.matchPoints, 0);
-  const matchMVP = showPerformancePoints && playersInMatch.length > 0 && Math.max(...playersInMatch.map((p) => p.matchPoints)) > 0
+  const potmPlayers = playersInMatch.filter((p) => p.is_potm);
+  const mostInfluentialPlayer = showPerformancePoints && playersInMatch.length > 0 && Math.max(...playersInMatch.map((p) => p.matchPoints)) > 0
     ? [...playersInMatch].sort((a, b) => b.matchPoints - a.matchPoints || b.goals - a.goals)[0]
     : null;
 
@@ -924,22 +931,40 @@ export default function MatchReportView({
             <h3 className="title-md" style={{ margin: 0 }}>
               Player Performances
             </h3>
-            {matchMVP && (
-              <div style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                padding: '0.25rem 0.65rem',
-                borderRadius: '999px',
-                background: 'rgba(16, 185, 129, 0.12)',
-                border: '1px solid #10b981',
-                color: '#10b981',
-                fontSize: '0.75rem',
-                fontWeight: 700
-              }}>
-                <Sparkles size={13} /> Match MVP: {matchMVP.name} ({matchMVP.matchPoints} pts)
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {showPotm && potmPlayers.length > 0 && (
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: '999px',
+                  background: 'rgba(217, 119, 6, 0.12)',
+                  border: '1px solid #d97706',
+                  color: '#b45309',
+                  fontSize: '0.75rem',
+                  fontWeight: 700
+                }}>
+                  <Star size={13} fill="currentColor" /> Player of the Match: {potmPlayers.map((p) => p.name).join(', ')}
+                </div>
+              )}
+              {mostInfluentialPlayer && (
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: '999px',
+                  background: 'rgba(16, 185, 129, 0.12)',
+                  border: '1px solid #10b981',
+                  color: '#10b981',
+                  fontSize: '0.75rem',
+                  fontWeight: 700
+                }}>
+                  <Sparkles size={13} /> Most Influential: {mostInfluentialPlayer.name} ({mostInfluentialPlayer.matchPoints} pts)
+                </div>
+              )}
+            </div>
           </div>
           {playersInMatch.length > 0 ? (
             <div style={{ overflowX: 'auto' }}>
@@ -967,20 +992,18 @@ export default function MatchReportView({
                   {playersInMatch.map(p => (
                     <tr key={p.id}>
                       <td style={{ fontWeight: 600 }}>
-                        {p.name}
-                        {p.is_goalkeeper && (
-                          <span style={{
-                            marginLeft: '0.4rem',
-                            fontSize: '0.6rem',
-                            padding: '0.1rem 0.25rem',
-                            borderRadius: 'var(--radius-sm)',
-                            backgroundColor: '#b45309',
-                            color: '#ffffff',
-                            verticalAlign: 'middle'
-                          }}>
-                            GK
-                          </span>
-                        )}
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <span>{p.name}</span>
+                          {p.is_goalkeeper && (
+                            <span className="badge-gk-mini" title="Goalkeeper">GK</span>
+                          )}
+                          {showCaptain && p.is_captain && (
+                            <span className="badge-captain-mini" title="Captain">C</span>
+                          )}
+                          {showPotm && p.is_potm && (
+                            <span className="badge-potm-mini" title="Player of the Match">★ POTM</span>
+                          )}
+                        </div>
                       </td>
                       {!teamInfo.hide_positions && <td><span className="badge-pos">{p.position}</span></td>}
                       <td style={{ textAlign: 'center', fontWeight: p.goals > 0 ? 600 : 400 }}>{p.goals}</td>
