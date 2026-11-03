@@ -97,7 +97,7 @@ export default function SettingsView({
 
   const handleThemeChange = (newTheme) => {
     setActiveTheme(newTheme);
-    applyTheme(newTheme);
+    applyTheme(newTheme, true);
     if (setCurrentTheme) {
       setCurrentTheme(newTheme);
     }

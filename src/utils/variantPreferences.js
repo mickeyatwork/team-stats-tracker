@@ -1,3 +1,5 @@
+import { saveUserPreferences } from './userPreferences';
+
 /**
  * Match Variants and Format Preferences
  */
@@ -34,6 +36,7 @@ export const getDefaultMatchVariant = () => {
 export const setDefaultMatchVariant = (variant) => {
   try {
     localStorage.setItem('preferred_match_variant', variant);
+    saveUserPreferences({ preferred_match_variant: variant });
   } catch (e) {
     console.error('Failed to set preferred match variant', e);
   }

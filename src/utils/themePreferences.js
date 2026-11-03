@@ -1,3 +1,5 @@
+import { saveUserPreferences } from './userPreferences';
+
 export const THEMES = {
   CYAN: 'cyan',
   CRIMSON: 'crimson'
@@ -36,11 +38,14 @@ export function getSavedTheme() {
   }
 }
 
-export function applyTheme(theme) {
+export function applyTheme(theme, persist = false) {
   try {
     const validTheme = theme === THEMES.CRIMSON ? THEMES.CRIMSON : THEMES.CYAN;
     document.documentElement.setAttribute('data-theme', validTheme);
     localStorage.setItem(THEME_STORAGE_KEY, validTheme);
+    if (persist) {
+      saveUserPreferences({ theme: validTheme });
+    }
     return validTheme;
   } catch {
     return theme;

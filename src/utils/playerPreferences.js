@@ -1,3 +1,5 @@
+import { saveUserPreferences } from './userPreferences';
+
 /**
  * Utility functions for managing player preferences such as default selection state.
  */
@@ -41,6 +43,7 @@ export function setPlayerDefaultOff(playerId, isDefaultOff) {
       current.push(String(playerId));
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+    saveUserPreferences({ default_off_players: current });
   } catch (e) {
     console.error('Failed to save default off players', e);
   }
