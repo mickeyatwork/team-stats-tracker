@@ -666,7 +666,7 @@ export default function StatsView({
     const topConversion = eligibleFinishers.length > 0 ? eligibleFinishers[0].conversionRate : 0;
     const finisherLeaders = eligibleFinishers.filter((p) => p.conversionRate === topConversion);
 
-    // Impact Leader / MVP (Top Performance Points)
+    // Most Influential / Impact Leader (Top Performance Points)
     const eligibleImpact = [...statsSummary.playerList]
       .filter((p) => p.performancePoints > 0)
       .sort((a, b) => b.performancePoints - a.performancePoints || b.appearances - a.appearances);
@@ -1761,10 +1761,10 @@ export default function StatsView({
                   </div>
                 )}
 
-                {/* Impact Leader / MVP */}
+                {/* Most Influential / Impact Leader */}
                 {showPerformancePoints && (
                   <div className="dynamics-stat-box" title="Player with the highest overall performance score based on weighted match events (goals, assists, clean sheets, saves, DC)">
-                    <div className="dynamics-stat-label">"Impact Leader" (MVP Rating)</div>
+                    <div className="dynamics-stat-label">&quot;Most Influential&quot; (Impact Rating)</div>
                     {goalDynamics.impactLeaders?.length > 0 ? (
                       <>
                         <div className="dynamics-stat-value" style={{ color: '#10b981' }}>

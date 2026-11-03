@@ -11,7 +11,7 @@ import MatchReportView from './views/MatchReportView';
 import TournamentView from './views/TournamentView';
 import { getTeamFeatures } from './utils/featureFlags';
 import { getSavedTheme, applyTheme } from './utils/themePreferences';
-import { fetchUserPreferences } from './utils/userPreferences';
+import { fetchUserPreferences, getSavedMatchRoles } from './utils/userPreferences';
 import {
   ROLES,
   USER_STATUS,
@@ -239,6 +239,7 @@ export default function App() {
 
         const matchesWithStats = scopedMatches.map((m) => {
           const matchStatsArray = statsData?.filter((s) => s.match_id === m.id) || [];
+          const savedRoles = getSavedMatchRoles(m.id);
           const statsMap = {};
           matchStatsArray.forEach((s) => {
             statsMap[s.player_id] = {
@@ -247,7 +248,9 @@ export default function App() {
               saves: s.saves || 0,
               attempts: s.attempts || 0,
               defensive_contributions: s.defensive_contributions || 0,
-              is_goalkeeper: s.is_goalkeeper || false
+              is_goalkeeper: s.is_goalkeeper || false,
+              is_captain: s.is_captain ?? savedRoles.captains.includes(s.player_id),
+              is_potm: s.is_potm ?? savedRoles.potm.includes(s.player_id)
             };
           });
           return { ...m, stats: statsMap };
