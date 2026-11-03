@@ -1,10 +1,38 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck } from 'lucide-react';
+import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
 import { parseTournament, getTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
+
+const DEFAULT_COLUMN_ORDER = ['goals', 'attempts', 'assists', 'saves', 'dc'];
+
+const normalizeColumnOrder = (order) => {
+  if (!Array.isArray(order)) return null;
+  const valid = order.filter((k) => DEFAULT_COLUMN_ORDER.includes(k));
+  if (valid.length === 0) return null;
+  const missing = DEFAULT_COLUMN_ORDER.filter((k) => !valid.includes(k));
+  return [...valid, ...missing];
+};
+
+const loadSavedColumnOrder = (teamInfo) => {
+  const fromTeamSettings = normalizeColumnOrder(teamInfo?.settings?.tracker_column_order);
+  if (fromTeamSettings) return fromTeamSettings;
+  try {
+    const teamId = teamInfo?.id;
+    const raw =
+      (teamId && localStorage.getItem(`team_col_order_${teamId}`)) ||
+      localStorage.getItem('matchTrackerColumnOrder');
+    if (raw) {
+      const normalized = normalizeColumnOrder(JSON.parse(raw));
+      if (normalized) return normalized;
+    }
+  } catch {
+    // fallback to default order
+  }
+  return [...DEFAULT_COLUMN_ORDER];
+};
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -42,9 +70,44 @@ export default function MatchTrackerView({
   const [showGkDialog, setShowGkDialog] = useState(false);
   const [showDCDialog, setShowDCDialog] = useState(false);
   const [justTappedDCId, setJustTappedDCId] = useState(null);
+  const [columnOrder, setColumnOrder] = useState(() => loadSavedColumnOrder(teamInfo));
+  const [showColumnOrderModal, setShowColumnOrderModal] = useState(false);
+  const [draggedColKey, setDraggedColKey] = useState(null);
+  const [dragOverColKey, setDragOverColKey] = useState(null);
 
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
+
+  const saveColumnOrderToDb = useDebounceCallback(async (teamId, currentSettings, order) => {
+    if (!teamId) return;
+    try {
+      const nextSettings = {
+        ...currentSettings,
+        tracker_column_order: order
+      };
+      await supabase.from('team').update({ settings: nextSettings }).eq('id', teamId);
+    } catch {
+      // ignore if settings column unavailable
+    }
+  }, 800);
+
+  const updateColumnOrder = (newOrder) => {
+    setColumnOrder(newOrder);
+    try {
+      localStorage.setItem('matchTrackerColumnOrder', JSON.stringify(newOrder));
+      if (teamInfo?.id) {
+        localStorage.setItem(`team_col_order_${teamInfo.id}`, JSON.stringify(newOrder));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    if (teamInfo?.id) {
+      if (teamInfo.settings && typeof teamInfo.settings === 'object') {
+        teamInfo.settings.tracker_column_order = newOrder;
+      }
+      saveColumnOrderToDb(teamInfo.id, teamInfo.settings, newOrder);
+    }
+  };
 
   // Timeline State
   const [goalEvents, setGoalEvents] = useState([]);
@@ -798,7 +861,125 @@ export default function MatchTrackerView({
   const totalSaves = playersInMatch.reduce((sum, p) => sum + p.saves, 0);
   const totalAttempts = playersInMatch.reduce((sum, p) => sum + p.attempts, 0);
   const totalDC = playersInMatch.reduce((sum, p) => sum + p.defensive_contributions, 0);
-  const activeColsCount = 3 + (showAttempts ? 1 : 0) + (showDC ? 1 : 0);
+
+  const columnDefs = {
+    goals: {
+      key: 'goals',
+      shortLabel: 'Goals',
+      fullLabel: 'Goals',
+      cardTotalLabel: 'Goals',
+      headerTitle: 'Goals Scored',
+      icon: Target,
+      total: totalGoals,
+      enabled: true,
+      getValue: (p) => p.goals,
+      onDecrement: (p) => processGoalDecrement(p.id),
+      onIncrement: (p) => handleAddGoalClick(p.id),
+      decAria: (p) => `Decrease goals for ${p.name}`,
+      incAria: (p) => `Add goal for ${p.name}`
+    },
+    attempts: {
+      key: 'attempts',
+      shortLabel: 'Att',
+      fullLabel: 'Attempts (Att)',
+      cardTotalLabel: 'Att',
+      headerTitle: 'Attempts at Goal',
+      icon: Crosshair,
+      total: totalAttempts,
+      enabled: showAttempts,
+      getValue: (p) => p.attempts,
+      onDecrement: (p) => handleAttemptDecrement(p.id),
+      onIncrement: (p) => handleAttemptClick(p.id),
+      decAria: (p) => `Decrease attempts for ${p.name}`,
+      incAria: (p) => `Add attempt for ${p.name}`
+    },
+    assists: {
+      key: 'assists',
+      shortLabel: 'Asts',
+      fullLabel: 'Assists (Asts)',
+      cardTotalLabel: 'Assists',
+      headerTitle: 'Assists',
+      icon: Award,
+      total: totalAssists,
+      enabled: true,
+      getValue: (p) => p.assists,
+      onDecrement: (p) => updateMatchStat(activeMatch.id, p.id, 'assists', -1),
+      onIncrement: (p) => updateMatchStat(activeMatch.id, p.id, 'assists', 1),
+      decAria: (p) => `Decrease assists for ${p.name}`,
+      incAria: (p) => `Add assist for ${p.name}`
+    },
+    saves: {
+      key: 'saves',
+      shortLabel: 'Saves',
+      fullLabel: 'Saves',
+      cardTotalLabel: 'Saves',
+      headerTitle: 'Goalkeeper Saves',
+      icon: Shield,
+      total: totalSaves,
+      enabled: true,
+      getValue: (p) => p.saves,
+      onDecrement: (p) => updateMatchStat(activeMatch.id, p.id, 'saves', -1),
+      onIncrement: (p) => updateMatchStat(activeMatch.id, p.id, 'saves', 1),
+      decAria: (p) => `Decrease saves for ${p.name}`,
+      incAria: (p) => `Add save for ${p.name}`
+    },
+    dc: {
+      key: 'dc',
+      shortLabel: 'DC',
+      fullLabel: 'Defensive Contributions (DC)',
+      cardTotalLabel: 'DC',
+      headerTitle: 'Defensive Contributions',
+      icon: ShieldCheck,
+      total: totalDC,
+      enabled: showDC,
+      getValue: (p) => p.defensive_contributions,
+      onDecrement: (p) => updateMatchStat(activeMatch.id, p.id, 'defensive_contributions', -1),
+      onIncrement: (p) => updateMatchStat(activeMatch.id, p.id, 'defensive_contributions', 1),
+      decAria: (p) => `Decrease DC for ${p.name}`,
+      incAria: (p) => `Add DC for ${p.name}`
+    }
+  };
+
+  const activeColumns = columnOrder
+    .filter((key) => columnDefs[key]?.enabled)
+    .map((key) => columnDefs[key]);
+  const activeColsCount = activeColumns.length;
+
+  const applyActiveColumnReorder = (newActiveKeys) => {
+    const activeSet = new Set(newActiveKeys);
+    let idx = 0;
+    const nextOrder = columnOrder.map((k) => (activeSet.has(k) ? newActiveKeys[idx++] : k));
+    updateColumnOrder(nextOrder);
+  };
+
+  const moveActiveColumn = (colKey, direction) => {
+    const currentKeys = activeColumns.map((c) => c.key);
+    const index = currentKeys.indexOf(colKey);
+    const targetIndex = index + direction;
+    if (index === -1 || targetIndex < 0 || targetIndex >= currentKeys.length) return;
+    const nextKeys = [...currentKeys];
+    [nextKeys[index], nextKeys[targetIndex]] = [nextKeys[targetIndex], nextKeys[index]];
+    applyActiveColumnReorder(nextKeys);
+  };
+
+  const handleColumnDrop = (fromKey, toKey) => {
+    setDraggedColKey(null);
+    setDragOverColKey(null);
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    const currentKeys = activeColumns.map((c) => c.key);
+    const fromIdx = currentKeys.indexOf(fromKey);
+    const toIdx = currentKeys.indexOf(toKey);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const nextKeys = [...currentKeys];
+    const [moved] = nextKeys.splice(fromIdx, 1);
+    nextKeys.splice(toIdx, 0, moved);
+    applyActiveColumnReorder(nextKeys);
+  };
+
+  const isCustomColumnOrder = activeColumns.some((col, idx) => {
+    const defaultActive = DEFAULT_COLUMN_ORDER.filter((k) => columnDefs[k]?.enabled);
+    return col.key !== defaultActive[idx];
+  });
 
   const timeline = computeTimelineWithScores(goalEvents, activeMatch.opponent, squad);
 
@@ -1079,7 +1260,7 @@ export default function MatchTrackerView({
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             {/* View Mode Toggle */}
             <div className="view-mode-toggle">
               <button
@@ -1099,6 +1280,16 @@ export default function MatchTrackerView({
                 Table
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowColumnOrderModal(true)}
+              className={`btn btn-secondary ${isCustomColumnOrder ? 'btn-col-order-active' : ''}`}
+              style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
+              title="Reorder stat columns"
+            >
+              <ArrowUpDown size={13} /> Columns
+            </button>
 
             <button 
               onClick={() => setShowAmendSquad(true)} 
@@ -1135,129 +1326,33 @@ export default function MatchTrackerView({
                     className="stat-card-grid"
                     style={{ gridTemplateColumns: `repeat(${activeColsCount}, minmax(0, 1fr))` }}
                   >
-                    {/* Goals Column */}
-                    <div className="stat-col-cell">
-                      <div className="stat-control-label goals">
-                        <Target size={11} /> Goals
-                      </div>
-                      <div className="stat-card-control">
-                        <button
-                          onClick={() => processGoalDecrement(player.id)}
-                          className="btn-stat"
-                          aria-label={`Decrease goals for ${player.name}`}
-                        >
-                          -
-                        </button>
-                        <span className="stat-value">{player.goals}</span>
-                        <button
-                          onClick={() => handleAddGoalClick(player.id)}
-                          className="btn-stat-plus goals"
-                          aria-label={`Add goal for ${player.name}`}
-                        >
-                          <Plus size={15} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Attempts Column */}
-                    {showAttempts && (
-                      <div className="stat-col-cell">
-                        <div className="stat-control-label attempts">
-                          <Crosshair size={11} /> Att
+                    {activeColumns.map((col) => {
+                      const ColIcon = col.icon;
+                      return (
+                        <div key={col.key} className="stat-col-cell">
+                          <div className={`stat-control-label ${col.key}`}>
+                            <ColIcon size={11} /> {col.shortLabel}
+                          </div>
+                          <div className="stat-card-control">
+                            <button
+                              onClick={() => col.onDecrement(player)}
+                              className="btn-stat"
+                              aria-label={col.decAria(player)}
+                            >
+                              -
+                            </button>
+                            <span className="stat-value">{col.getValue(player)}</span>
+                            <button
+                              onClick={() => col.onIncrement(player)}
+                              className={`btn-stat-plus ${col.key}`}
+                              aria-label={col.incAria(player)}
+                            >
+                              <Plus size={15} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="stat-card-control">
-                          <button
-                            onClick={() => handleAttemptDecrement(player.id)}
-                            className="btn-stat"
-                            aria-label={`Decrease attempts for ${player.name}`}
-                          >
-                            -
-                          </button>
-                          <span className="stat-value">{player.attempts}</span>
-                          <button
-                            onClick={() => handleAttemptClick(player.id)}
-                            className="btn-stat-plus attempts"
-                            aria-label={`Add attempt for ${player.name}`}
-                          >
-                            <Plus size={15} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Assists Column */}
-                    <div className="stat-col-cell">
-                      <div className="stat-control-label assists">
-                        <Award size={11} /> Asts
-                      </div>
-                      <div className="stat-card-control">
-                        <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', -1)}
-                          className="btn-stat"
-                          aria-label={`Decrease assists for ${player.name}`}
-                        >
-                          -
-                        </button>
-                        <span className="stat-value">{player.assists}</span>
-                        <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', 1)}
-                          className="btn-stat-plus assists"
-                          aria-label={`Add assist for ${player.name}`}
-                        >
-                          <Plus size={15} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Saves Column */}
-                    <div className="stat-col-cell">
-                      <div className="stat-control-label saves">
-                        <Shield size={11} /> Saves
-                      </div>
-                      <div className="stat-card-control">
-                        <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', -1)}
-                          className="btn-stat"
-                          aria-label={`Decrease saves for ${player.name}`}
-                        >
-                          -
-                        </button>
-                        <span className="stat-value">{player.saves}</span>
-                        <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', 1)}
-                          className="btn-stat-plus saves"
-                          aria-label={`Add save for ${player.name}`}
-                        >
-                          <Plus size={15} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Defensive Contributions Column */}
-                    {showDC && (
-                      <div className="stat-col-cell">
-                        <div className="stat-control-label dc">
-                          <ShieldCheck size={11} /> DC
-                        </div>
-                        <div className="stat-card-control">
-                          <button
-                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1)}
-                            className="btn-stat"
-                            aria-label={`Decrease DC for ${player.name}`}
-                          >
-                            -
-                          </button>
-                          <span className="stat-value">{player.defensive_contributions}</span>
-                          <button
-                            onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1)}
-                            className="btn-stat-plus dc"
-                            aria-label={`Add DC for ${player.name}`}
-                          >
-                            <Plus size={15} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -1270,30 +1365,12 @@ export default function MatchTrackerView({
                     className="stat-cards-totals-grid"
                     style={{ gridTemplateColumns: `repeat(${activeColsCount}, minmax(0, 1fr))` }}
                   >
-                    <div className="stat-card-total-box goals">
-                      <span className="stat-card-total-num goals">{totalGoals}</span>
-                      <span className="stat-card-total-title">Goals</span>
-                    </div>
-                    {showAttempts && (
-                      <div className="stat-card-total-box attempts">
-                        <span className="stat-card-total-num attempts">{totalAttempts}</span>
-                        <span className="stat-card-total-title">Att</span>
+                    {activeColumns.map((col) => (
+                      <div key={col.key} className={`stat-card-total-box ${col.key}`}>
+                        <span className={`stat-card-total-num ${col.key}`}>{col.total}</span>
+                        <span className="stat-card-total-title">{col.cardTotalLabel}</span>
                       </div>
-                    )}
-                    <div className="stat-card-total-box assists">
-                      <span className="stat-card-total-num assists">{totalAssists}</span>
-                      <span className="stat-card-total-title">Assists</span>
-                    </div>
-                    <div className="stat-card-total-box saves">
-                      <span className="stat-card-total-num saves">{totalSaves}</span>
-                      <span className="stat-card-total-title">Saves</span>
-                    </div>
-                    {showDC && (
-                      <div className="stat-card-total-box dc">
-                        <span className="stat-card-total-num dc">{totalDC}</span>
-                        <span className="stat-card-total-title">DC</span>
-                      </div>
-                    )}
+                    ))}
                   </div>
                 </div>
               )}
@@ -1309,25 +1386,38 @@ export default function MatchTrackerView({
                 </div>
 
                 <div className="stat-cols-3">
-                  <div className="stat-col-header goals" title="Goals Scored">
-                    <Target size={13} /> Goals
-                  </div>
-                  {showAttempts && (
-                    <div className="stat-col-header attempts" title="Attempts at Goal">
-                      <Crosshair size={13} /> Att
-                    </div>
-                  )}
-                  <div className="stat-col-header assists" title="Assists">
-                    <Award size={13} /> Asts
-                  </div>
-                  <div className="stat-col-header saves" title="Goalkeeper Saves">
-                    <Shield size={13} /> Saves
-                  </div>
-                  {showDC && (
-                    <div className="stat-col-header dc" title="Defensive Contributions">
-                      <ShieldCheck size={13} /> DC
-                    </div>
-                  )}
+                  {activeColumns.map((col) => {
+                    const ColIcon = col.icon;
+                    const isDragged = draggedColKey === col.key;
+                    const isDragOver = dragOverColKey === col.key && draggedColKey !== col.key;
+                    return (
+                      <div
+                        key={col.key}
+                        className={`stat-col-header ${col.key} draggable-col-header ${isDragged ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
+                        title={`${col.headerTitle} (Drag to reorder or tap to configure columns)`}
+                        draggable
+                        onDragStart={() => setDraggedColKey(col.key)}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          if (dragOverColKey !== col.key) setDragOverColKey(col.key);
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverColKey === col.key) setDragOverColKey(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          handleColumnDrop(draggedColKey, col.key);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedColKey(null);
+                          setDragOverColKey(null);
+                        }}
+                        onClick={() => setShowColumnOrderModal(true)}
+                      >
+                        <ColIcon size={13} /> {col.shortLabel}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1350,104 +1440,25 @@ export default function MatchTrackerView({
                   </div>
 
                   <div className="stat-cols-3">
-                    {/* Goals Counter */}
-                    <div className="stat-control-group">
-                      <button
-                        onClick={() => processGoalDecrement(player.id)}
-                        className="btn-stat"
-                        aria-label={`Decrease goals for ${player.name}`}
-                      >
-                        -
-                      </button>
-                      <span className="stat-value">{player.goals}</span>
-                      <button
-                        onClick={() => handleAddGoalClick(player.id)}
-                        className="btn-stat-plus goals"
-                        aria-label={`Add goal for ${player.name}`}
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </div>
-
-                    {/* Attempts Counter */}
-                    {showAttempts && (
-                      <div className="stat-control-group">
+                    {activeColumns.map((col) => (
+                      <div key={col.key} className="stat-control-group">
                         <button
-                          onClick={() => handleAttemptDecrement(player.id)}
+                          onClick={() => col.onDecrement(player)}
                           className="btn-stat"
-                          aria-label={`Decrease attempts for ${player.name}`}
+                          aria-label={col.decAria(player)}
                         >
                           -
                         </button>
-                        <span className="stat-value">{player.attempts}</span>
+                        <span className="stat-value">{col.getValue(player)}</span>
                         <button
-                          onClick={() => handleAttemptClick(player.id)}
-                          className="btn-stat-plus attempts"
-                          aria-label={`Add attempt for ${player.name}`}
+                          onClick={() => col.onIncrement(player)}
+                          className={`btn-stat-plus ${col.key}`}
+                          aria-label={col.incAria(player)}
                         >
                           <Plus size={14} />
                         </button>
                       </div>
-                    )}
-
-                    {/* Assists Counter */}
-                    <div className="stat-control-group">
-                      <button
-                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', -1)}
-                        className="btn-stat"
-                        aria-label={`Decrease assists for ${player.name}`}
-                      >
-                        -
-                      </button>
-                      <span className="stat-value">{player.assists}</span>
-                      <button
-                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'assists', 1)}
-                        className="btn-stat-plus assists"
-                        aria-label={`Add assist for ${player.name}`}
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </div>
-
-                    {/* Saves Counter (Goalkeeper) */}
-                    <div className="stat-control-group">
-                      <button
-                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', -1)}
-                        className="btn-stat"
-                        aria-label={`Decrease saves for ${player.name}`}
-                      >
-                        -
-                      </button>
-                      <span className="stat-value">{player.saves}</span>
-                      <button
-                        onClick={() => updateMatchStat(activeMatch.id, player.id, 'saves', 1)}
-                        className="btn-stat-plus saves"
-                        aria-label={`Add save for ${player.name}`}
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </div>
-
-                    {/* Defensive Contributions Counter */}
-                    {showDC && (
-                      <div className="stat-control-group">
-                        <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1)}
-                          className="btn-stat"
-                          aria-label={`Decrease DC for ${player.name}`}
-                        >
-                          -
-                        </button>
-                        <span className="stat-value">{player.defensive_contributions}</span>
-                        <button
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1)}
-                          className="btn-stat-plus dc"
-                          aria-label={`Add DC for ${player.name}`}
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                    )}
+                    ))}
                   </div>
                 </div>
               ))}
@@ -1459,11 +1470,11 @@ export default function MatchTrackerView({
                     <span className="stat-totals-label">Totals</span>
                   </div>
                   <div className="stat-cols-3">
-                    <div className="stat-total-cell goals">{totalGoals}</div>
-                    {showAttempts && <div className="stat-total-cell attempts">{totalAttempts}</div>}
-                    <div className="stat-total-cell assists">{totalAssists}</div>
-                    <div className="stat-total-cell saves">{totalSaves}</div>
-                    {showDC && <div className="stat-total-cell dc">{totalDC}</div>}
+                    {activeColumns.map((col) => (
+                      <div key={col.key} className={`stat-total-cell ${col.key}`}>
+                        {col.total}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -2018,6 +2029,11 @@ export default function MatchTrackerView({
                             </span>
                           )}
                         </div>
+
+                        <div className="dc-counter-badge" title="Total Defensive Contributions">
+                          <ShieldCheck size={13} />
+                          <span>{player.defensive_contributions}</span>
+                        </div>
                       </div>
 
                       <div className="dc-player-tap-actions">
@@ -2032,24 +2048,6 @@ export default function MatchTrackerView({
                         >
                           -
                         </button>
-
-                        <div className="dc-counter-badge" title="Total Defensive Contributions">
-                          <ShieldCheck size={13} />
-                          <span>{player.defensive_contributions}</span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1);
-                            setJustTappedDCId(player.id);
-                            setTimeout(() => setJustTappedDCId((curr) => (curr === player.id ? null : curr)), 350);
-                          }}
-                          className="btn-dc-tap-plus"
-                          title={`Add Defensive Contribution for ${player.name}`}
-                        >
-                          <Plus size={14} /> +1
-                        </button>
                       </div>
                     </div>
                   );
@@ -2059,6 +2057,131 @@ export default function MatchTrackerView({
               <button onClick={() => setShowDCDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
                 Done
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Column Order Preferences Modal */}
+        {showColumnOrderModal && (
+          <div className="modal-overlay" onClick={() => setShowColumnOrderModal(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+              <div className="flex-between mb-3">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    width: '2.25rem',
+                    height: '2.25rem',
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'var(--color-primary-light)',
+                    color: 'var(--color-primary-dark)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <ArrowUpDown size={18} />
+                  </div>
+                  <div>
+                    <h3 className="title-md" style={{ marginBottom: 0 }}>Column Order</h3>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                      Saved automatically to your preferences
+                    </span>
+                  </div>
+                </div>
+                <button onClick={() => setShowColumnOrderModal(false)} className="btn-icon">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '0.9rem' }}>
+                Move your most-used stat trackers to the top so they appear first in both Cards and Table views.
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                {activeColumns.map((col, idx) => {
+                  const ColIcon = col.icon;
+                  const isFirst = idx === 0;
+                  const isLast = idx === activeColumns.length - 1;
+                  const isDragged = draggedColKey === col.key;
+                  const isDragOver = dragOverColKey === col.key && draggedColKey !== col.key;
+
+                  return (
+                    <div
+                      key={col.key}
+                      className={`col-order-item ${isDragged ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
+                      draggable
+                      onDragStart={() => setDraggedColKey(col.key)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (dragOverColKey !== col.key) setDragOverColKey(col.key);
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverColKey === col.key) setDragOverColKey(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleColumnDrop(draggedColKey, col.key);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedColKey(null);
+                        setDragOverColKey(null);
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0, flex: 1 }}>
+                        <GripVertical size={15} style={{ color: 'var(--color-text-light)', cursor: 'grab', flexShrink: 0 }} />
+                        <span className="col-order-rank">{idx + 1}</span>
+                        <span className={`stat-control-label ${col.key}`} style={{ marginBottom: 0, fontSize: '0.82rem' }}>
+                          <ColIcon size={14} /> {col.fullLabel}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => moveActiveColumn(col.key, -1)}
+                          disabled={isFirst}
+                          className="btn-col-move"
+                          title={`Move ${col.shortLabel} earlier`}
+                          aria-label={`Move ${col.shortLabel} earlier`}
+                        >
+                          <ChevronUp size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveActiveColumn(col.key, 1)}
+                          disabled={isLast}
+                          className="btn-col-move"
+                          title={`Move ${col.shortLabel} later`}
+                          aria-label={`Move ${col.shortLabel} later`}
+                        >
+                          <ChevronDown size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.1rem' }}>
+                {isCustomColumnOrder && (
+                  <button
+                    type="button"
+                    onClick={() => updateColumnOrder([...DEFAULT_COLUMN_ORDER])}
+                    className="btn btn-secondary"
+                    style={{ width: 'auto', padding: '0.6rem 0.9rem', fontSize: '0.82rem' }}
+                    title="Reset to default column order"
+                  >
+                    <RotateCcw size={14} /> Reset
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowColumnOrderModal(false)}
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         )}
