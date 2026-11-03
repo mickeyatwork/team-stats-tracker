@@ -1,5 +1,5 @@
 import { useState, useMemo, Fragment } from 'react';
-import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Crosshair, ShieldCheck } from 'lucide-react';
+import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Crosshair, ShieldCheck, CheckSquare, Filter } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import {
   FEATURE_KEYS,
@@ -33,6 +33,7 @@ export default function StatsView({
   const [sortField, setSortField] = useState('ga'); // default sort by G+A
   const [sortDirection, setSortDirection] = useState('desc'); // default descending
   const [tableMode, setTableMode] = useState('totals'); // 'totals' | 'per_game'
+  const [showAllSquadPlayers, setShowAllSquadPlayers] = useState(false); // hide 0-app players by default
 
   // Recent Form state (window: 3 or 5 games)
   const [formWindow, setFormWindow] = useState(3);
@@ -43,9 +44,21 @@ export default function StatsView({
   // State for expanded leaderboard modal
   const [expandedLeaderboard, setExpandedLeaderboard] = useState(null);
 
-  // Competition & Tournament filtering
+  // Competition, Tournament & Custom Match Selection filtering
   const [selectedCompetition, setSelectedCompetition] = useState('ALL');
   const [selectedTournament, setSelectedTournament] = useState('ALL');
+  const [showMatchSelector, setShowMatchSelector] = useState(false);
+  const [selectedMatchIds, setSelectedMatchIds] = useState(null); // null = all matches in pool selected
+
+  const getMatchTournamentName = (m) => {
+    if (m.competition !== 'Tournament' || !m.tournament) return '';
+    return m.tournament.split('::')[0]?.trim() || '';
+  };
+
+  const getMatchTournamentRound = (m) => {
+    if (m.competition !== 'Tournament' || !m.tournament) return '';
+    return m.tournament.split('::')[1]?.trim() || '';
+  };
 
   const availableCompetitions = useMemo(() => {
     const set = new Set();
@@ -63,26 +76,79 @@ export default function StatsView({
   const availableTournaments = useMemo(() => {
     const set = new Set();
     matches.forEach((m) => {
-      if (m.competition === 'Tournament' && m.tournament) {
-        const parts = m.tournament.split('::');
-        if (parts[0]) set.add(parts[0].trim());
-      }
+      const tName = getMatchTournamentName(m);
+      if (tName) set.add(tName);
     });
     return Array.from(set);
   }, [matches]);
 
-  const filteredMatches = useMemo(() => {
+  const competitionFilteredMatches = useMemo(() => {
     return matches.filter((m) => {
       if (selectedCompetition !== 'ALL' && m.competition !== selectedCompetition) {
         return false;
       }
       if (selectedCompetition === 'Tournament' && selectedTournament !== 'ALL') {
-        const parts = (m.tournament || '').split('::');
-        if (parts[0]?.trim() !== selectedTournament) return false;
+        if (getMatchTournamentName(m) !== selectedTournament) return false;
       }
       return true;
     });
   }, [matches, selectedCompetition, selectedTournament]);
+
+  const sortedSelectorMatches = useMemo(() => {
+    return [...competitionFilteredMatches].sort((a, b) => {
+      const dateDiff = new Date(b.date) - new Date(a.date);
+      if (dateDiff !== 0) return dateDiff;
+      if (b.created_at && a.created_at) {
+        return new Date(b.created_at) - new Date(a.created_at);
+      }
+      return String(b.id || '').localeCompare(String(a.id || ''));
+    });
+  }, [competitionFilteredMatches]);
+
+  const filteredMatches = useMemo(() => {
+    if (selectedMatchIds === null) return competitionFilteredMatches;
+    return competitionFilteredMatches.filter((m) => selectedMatchIds.has(m.id));
+  }, [competitionFilteredMatches, selectedMatchIds]);
+
+  const isMatchSelected = (matchId) => {
+    return selectedMatchIds === null ? true : selectedMatchIds.has(matchId);
+  };
+
+  const toggleMatchSelection = (matchId) => {
+    setSelectedMatchIds((prev) => {
+      const next = prev === null
+        ? new Set(competitionFilteredMatches.map((m) => m.id))
+        : new Set(prev);
+      if (next.has(matchId)) {
+        next.delete(matchId);
+      } else {
+        next.add(matchId);
+      }
+      return next;
+    });
+  };
+
+  const toggleTournamentSelection = (tName) => {
+    const tourneyMatchIds = competitionFilteredMatches
+      .filter((m) => getMatchTournamentName(m) === tName)
+      .map((m) => m.id);
+    if (tourneyMatchIds.length === 0) return;
+
+    setSelectedMatchIds((prev) => {
+      const next = prev === null
+        ? new Set(competitionFilteredMatches.map((m) => m.id))
+        : new Set(prev);
+      const allSelected = tourneyMatchIds.every((id) => next.has(id));
+      if (allSelected) {
+        tourneyMatchIds.forEach((id) => next.delete(id));
+      } else {
+        tourneyMatchIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const isCustomMatchSelection = selectedMatchIds !== null && filteredMatches.length !== competitionFilteredMatches.length;
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -373,6 +439,13 @@ export default function StatsView({
       return a.name.localeCompare(b.name);
     });
   }, [statsSummary.playerList, sortField, sortDirection, tableMode]);
+
+  const activeSquadPlayers = useMemo(() => {
+    return sortedPlayers.filter((p) => p.appearances > 0);
+  }, [sortedPlayers]);
+
+  const zeroAppsCount = sortedPlayers.length - activeSquadPlayers.length;
+  const displayedSquadPlayers = showAllSquadPlayers ? sortedPlayers : activeSquadPlayers;
 
   const renderSortIndicator = (field) => {
     if (sortField !== field) {
@@ -892,7 +965,7 @@ export default function StatsView({
       <div className="view-container">
         {/* Competition Filter Bar */}
         {availableCompetitions.length > 0 && (
-          <div className="competition-filter-bar">
+          <div className="competition-filter-bar" style={{ alignItems: 'center' }}>
             <button
               className={`btn-comp-filter ${selectedCompetition === 'ALL' ? 'active' : ''}`}
               onClick={() => {
@@ -917,6 +990,24 @@ export default function StatsView({
                 </button>
               );
             })}
+
+            {matches.length > 0 && (
+              <button
+                type="button"
+                className={`btn-comp-filter btn-match-selector-toggle ${showMatchSelector || isCustomMatchSelection ? 'active' : ''}`}
+                onClick={() => setShowMatchSelector((prev) => !prev)}
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                title="Select or deselect specific matches and tournaments"
+              >
+                <Filter size={13} />
+                <span>
+                  {isCustomMatchSelection
+                    ? `Selected (${filteredMatches.length}/${competitionFilteredMatches.length})`
+                    : 'Select Matches'}
+                </span>
+                {showMatchSelector ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+            )}
           </div>
         )}
 
@@ -940,6 +1031,137 @@ export default function StatsView({
                 {tName}
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Expandable Match & Tournament Checkbox Selector */}
+        {showMatchSelector && competitionFilteredMatches.length > 0 && (
+          <div className="card match-selector-panel" style={{ marginBottom: '1.25rem', padding: '0.9rem 1rem' }}>
+            <div className="flex-between" style={{ flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <CheckSquare size={16} color="var(--color-primary-dark)" />
+                <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--color-text-main)' }}>
+                  Filter Matches &amp; Tournaments
+                </span>
+                <span className="badge-form-count">
+                  {filteredMatches.length} of {competitionFilteredMatches.length} included
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <button
+                  type="button"
+                  className="btn-selector-action"
+                  onClick={() => setSelectedMatchIds(null)}
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  className="btn-selector-action"
+                  onClick={() => setSelectedMatchIds(new Set())}
+                >
+                  Deselect All
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setShowMatchSelector(false)}
+                  style={{ padding: '0.2rem' }}
+                  title="Close match selector"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Tournaments Quick Checkboxes (if any exist in current view) */}
+            {(() => {
+              const visibleTournaments = availableTournaments.filter((tName) =>
+                competitionFilteredMatches.some((m) => getMatchTournamentName(m) === tName)
+              );
+              if (visibleTournaments.length === 0) return null;
+              return (
+                <div style={{ marginBottom: '0.8rem', paddingBottom: '0.7rem', borderBottom: '1px solid var(--color-border-light)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: '0.4rem', letterSpacing: '0.03em' }}>
+                    Tournaments
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    {visibleTournaments.map((tName) => {
+                      const tMatches = competitionFilteredMatches.filter((m) => getMatchTournamentName(m) === tName);
+                      const selectedCount = tMatches.filter((m) => isMatchSelected(m.id)).length;
+                      const allSelected = selectedCount === tMatches.length && tMatches.length > 0;
+                      const someSelected = selectedCount > 0 && !allSelected;
+
+                      return (
+                        <div
+                          key={tName}
+                          className={`match-selector-tourney-chip ${allSelected ? 'selected' : someSelected ? 'partial' : ''}`}
+                          onClick={() => toggleTournamentSelection(tName)}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={() => {}}
+                            style={{ accentColor: 'var(--color-primary)', cursor: 'pointer', margin: 0 }}
+                          />
+                          <span>{tName}</span>
+                          <span className="tourney-chip-count">
+                            {selectedCount}/{tMatches.length}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Individual Matches Checklist */}
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: '0.4rem', letterSpacing: '0.03em' }}>
+              Matches ({sortedSelectorMatches.length})
+            </div>
+            <div className="match-selector-list">
+              {sortedSelectorMatches.map((m) => {
+                const checked = isMatchSelected(m.id);
+                const dateStr = m.date
+                  ? new Date(m.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                  : '';
+                const tName = getMatchTournamentName(m);
+                const tRound = getMatchTournamentRound(m);
+                const compLabel = tName
+                  ? `${tName}${tRound ? ` • ${tRound}` : ''}`
+                  : (m.competition || 'Friendly');
+                const gf = m.team_goals || 0;
+                const ga = m.opponent_goals || 0;
+                const res = m.hide_score ? null : gf > ga ? 'W' : gf === ga ? 'D' : 'L';
+
+                return (
+                  <label
+                    key={m.id}
+                    className={`match-selector-item ${checked ? 'selected' : 'deselected'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleMatchSelection(m.id)}
+                      style={{ accentColor: 'var(--color-primary)', cursor: 'pointer', margin: 0, flexShrink: 0 }}
+                    />
+                    <div className="match-selector-item-main">
+                      <span className="match-selector-opp">vs {m.opponent || 'Opponent'}</span>
+                      <span className="match-selector-meta">
+                        {dateStr && <span>{dateStr}</span>}
+                        {dateStr && compLabel && <span>•</span>}
+                        <span>{compLabel}</span>
+                      </span>
+                    </div>
+                    <span className={`match-selector-score ${res ? res.toLowerCase() : ''}`}>
+                      {m.hide_score ? 'Played' : `${gf}-${ga} ${res}`}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -1657,24 +1879,47 @@ export default function StatsView({
         {/* Full Player Breakdown Table */}
         <div className="card mt-4" style={{ padding: 0, overflow: 'hidden' }}>
           <div className="flex-between" style={{ padding: '1rem', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <h2 className="title-md" style={{ margin: 0 }}>
-              Squad Breakdown
-            </h2>
-            <div className="table-mode-toggle">
-              <button
-                type="button"
-                className={`btn-table-mode ${tableMode === 'totals' ? 'active' : ''}`}
-                onClick={() => setTableMode('totals')}
-              >
-                Totals
-              </button>
-              <button
-                type="button"
-                className={`btn-table-mode ${tableMode === 'per_game' ? 'active' : ''}`}
-                onClick={() => setTableMode('per_game')}
-              >
-                Per Game
-              </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <h2 className="title-md" style={{ margin: 0 }}>
+                Squad Breakdown
+              </h2>
+              {zeroAppsCount > 0 && (
+                <span className="badge-form-count">
+                  {showAllSquadPlayers
+                    ? `All ${sortedPlayers.length}`
+                    : `${activeSquadPlayers.length} Played`}
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {zeroAppsCount > 0 && (
+                <button
+                  type="button"
+                  className="btn-form-expand"
+                  style={{ padding: '0.25rem 0.65rem', fontSize: '0.72rem' }}
+                  onClick={() => setShowAllSquadPlayers((prev) => !prev)}
+                >
+                  {showAllSquadPlayers ? `Hide 0 Apps (${zeroAppsCount})` : `Show All (${sortedPlayers.length})`}
+                </button>
+              )}
+
+              <div className="table-mode-toggle">
+                <button
+                  type="button"
+                  className={`btn-table-mode ${tableMode === 'totals' ? 'active' : ''}`}
+                  onClick={() => setTableMode('totals')}
+                >
+                  Totals
+                </button>
+                <button
+                  type="button"
+                  className={`btn-table-mode ${tableMode === 'per_game' ? 'active' : ''}`}
+                  onClick={() => setTableMode('per_game')}
+                >
+                  Per Game
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1762,7 +2007,7 @@ export default function StatsView({
                 </tr>
               </thead>
               <tbody>
-                {sortedPlayers.map((p) => {
+                {displayedSquadPlayers.map((p) => {
                   const goalsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.gPerGame.toFixed(2) : '-') : p.goals;
                   const attemptsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.attemptsPerGame.toFixed(2) : '-') : p.attempts;
                   const assistsDisplay = tableMode === 'per_game' ? (p.appearances > 0 ? p.aPerGame.toFixed(2) : '-') : p.assists;
@@ -1832,16 +2077,38 @@ export default function StatsView({
                     </tr>
                   );
                 })}
-                {sortedPlayers.length === 0 && (
+                {displayedSquadPlayers.length === 0 && (
                   <tr>
                     <td colSpan={(teamInfo.hide_positions ? 7 : 8) + (showEfficiencyRating ? 1 : 0) + (showAttempts ? 2 : 0) + (showDC ? 1 : 0) + (showPerformancePoints ? 1 : 0)} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
-                      No squad stats available yet.
+                      {zeroAppsCount > 0
+                        ? 'No players with appearances in the selected matches.'
+                        : 'No squad stats available yet.'}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {zeroAppsCount > 0 && (
+            <div style={{ textAlign: 'center', padding: '0.75rem 1rem', borderTop: '1px solid var(--color-border-light)' }}>
+              <button
+                type="button"
+                className="btn-form-expand"
+                onClick={() => setShowAllSquadPlayers((prev) => !prev)}
+              >
+                {showAllSquadPlayers ? (
+                  <>
+                    Hide Players with 0 Apps ({zeroAppsCount}) <ChevronUp size={15} />
+                  </>
+                ) : (
+                  <>
+                    Show All Squad ({sortedPlayers.length} Players) <ChevronDown size={15} />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

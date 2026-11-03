@@ -11,6 +11,7 @@ import MatchReportView from './views/MatchReportView';
 import TournamentView from './views/TournamentView';
 import { getTeamFeatures } from './utils/featureFlags';
 import { getSavedTheme, applyTheme } from './utils/themePreferences';
+import { fetchUserPreferences } from './utils/userPreferences';
 import {
   ROLES,
   USER_STATUS,
@@ -88,6 +89,12 @@ export default function App() {
     setIsAppLoading(true);
     try {
       const email = session.user.email;
+
+      // 0. Load User Preferences from user_preferences table / metadata
+      const loadedPrefs = await fetchUserPreferences(session);
+      if (loadedPrefs?.theme) {
+        setCurrentTheme(loadedPrefs.theme);
+      }
 
       // 1. Fetch User Profile
       let profile = null;

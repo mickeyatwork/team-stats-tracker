@@ -5,34 +5,13 @@ import { supabase } from '../supabaseClient';
 import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
 import { parseTournament, getTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
-
-const DEFAULT_COLUMN_ORDER = ['goals', 'attempts', 'assists', 'saves', 'dc'];
-
-const normalizeColumnOrder = (order) => {
-  if (!Array.isArray(order)) return null;
-  const valid = order.filter((k) => DEFAULT_COLUMN_ORDER.includes(k));
-  if (valid.length === 0) return null;
-  const missing = DEFAULT_COLUMN_ORDER.filter((k) => !valid.includes(k));
-  return [...valid, ...missing];
-};
-
-const loadSavedColumnOrder = (teamInfo) => {
-  const fromTeamSettings = normalizeColumnOrder(teamInfo?.settings?.tracker_column_order);
-  if (fromTeamSettings) return fromTeamSettings;
-  try {
-    const teamId = teamInfo?.id;
-    const raw =
-      (teamId && localStorage.getItem(`team_col_order_${teamId}`)) ||
-      localStorage.getItem('matchTrackerColumnOrder');
-    if (raw) {
-      const normalized = normalizeColumnOrder(JSON.parse(raw));
-      if (normalized) return normalized;
-    }
-  } catch {
-    // fallback to default order
-  }
-  return [...DEFAULT_COLUMN_ORDER];
-};
+import {
+  DEFAULT_COLUMN_ORDER,
+  getTrackerColumnOrder,
+  getTrackerHiddenColumns,
+  saveUserPreferences,
+  subscribeToUserPreferences
+} from '../utils/userPreferences';
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -70,7 +49,8 @@ export default function MatchTrackerView({
   const [showGkDialog, setShowGkDialog] = useState(false);
   const [showDCDialog, setShowDCDialog] = useState(false);
   const [justTappedDCId, setJustTappedDCId] = useState(null);
-  const [columnOrder, setColumnOrder] = useState(() => loadSavedColumnOrder(teamInfo));
+  const [columnOrder, setColumnOrder] = useState(() => getTrackerColumnOrder(teamInfo));
+  const [hiddenColumns, setHiddenColumns] = useState(() => getTrackerHiddenColumns(teamInfo));
   const [showColumnOrderModal, setShowColumnOrderModal] = useState(false);
   const [draggedColKey, setDraggedColKey] = useState(null);
   const [dragOverColKey, setDragOverColKey] = useState(null);
@@ -78,35 +58,27 @@ export default function MatchTrackerView({
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
 
-  const saveColumnOrderToDb = useDebounceCallback(async (teamId, currentSettings, order) => {
-    if (!teamId) return;
-    try {
-      const nextSettings = {
-        ...currentSettings,
-        tracker_column_order: order
-      };
-      await supabase.from('team').update({ settings: nextSettings }).eq('id', teamId);
-    } catch {
-      // ignore if settings column unavailable
-    }
-  }, 800);
+  useEffect(() => {
+    setColumnOrder(getTrackerColumnOrder(teamInfo));
+    setHiddenColumns(getTrackerHiddenColumns(teamInfo));
+    return subscribeToUserPreferences(() => {
+      setColumnOrder(getTrackerColumnOrder(teamInfo));
+      setHiddenColumns(getTrackerHiddenColumns(teamInfo));
+    });
+  }, [teamInfo?.id]);
 
   const updateColumnOrder = (newOrder) => {
     setColumnOrder(newOrder);
-    try {
-      localStorage.setItem('matchTrackerColumnOrder', JSON.stringify(newOrder));
-      if (teamInfo?.id) {
-        localStorage.setItem(`team_col_order_${teamInfo.id}`, JSON.stringify(newOrder));
-      }
-    } catch {
-      // ignore storage errors
-    }
-    if (teamInfo?.id) {
-      if (teamInfo.settings && typeof teamInfo.settings === 'object') {
-        teamInfo.settings.tracker_column_order = newOrder;
-      }
-      saveColumnOrderToDb(teamInfo.id, teamInfo.settings, newOrder);
-    }
+    saveUserPreferences({
+      tracker_column_order: newOrder
+    });
+  };
+
+  const updateHiddenColumns = (newHidden) => {
+    setHiddenColumns(newHidden);
+    saveUserPreferences({
+      tracker_hidden_columns: newHidden
+    });
   };
 
   // Timeline State
@@ -122,6 +94,7 @@ export default function MatchTrackerView({
   const handleSetViewMode = (mode) => {
     setViewMode(mode);
     localStorage.setItem('matchTrackerViewMode', mode);
+    saveUserPreferences({ tracker_view_mode: mode });
   };
 
   // Fetch goal events for active match
@@ -940,10 +913,23 @@ export default function MatchTrackerView({
     }
   };
 
-  const activeColumns = columnOrder
+  const availableColumns = columnOrder
     .filter((key) => columnDefs[key]?.enabled)
     .map((key) => columnDefs[key]);
-  const activeColsCount = activeColumns.length;
+
+  const activeColumns = availableColumns.filter((col) => !hiddenColumns.includes(col.key));
+  const activeColsCount = Math.max(1, activeColumns.length);
+
+  const toggleColumnVisibility = (colKey) => {
+    const isCurrentlyHidden = hiddenColumns.includes(colKey);
+    if (!isCurrentlyHidden && activeColumns.length <= 1) {
+      return; // Keep at least one column visible
+    }
+    const nextHidden = isCurrentlyHidden
+      ? hiddenColumns.filter((k) => k !== colKey)
+      : [...hiddenColumns, colKey];
+    updateHiddenColumns(nextHidden);
+  };
 
   const applyActiveColumnReorder = (newActiveKeys) => {
     const activeSet = new Set(newActiveKeys);
@@ -953,7 +939,7 @@ export default function MatchTrackerView({
   };
 
   const moveActiveColumn = (colKey, direction) => {
-    const currentKeys = activeColumns.map((c) => c.key);
+    const currentKeys = availableColumns.map((c) => c.key);
     const index = currentKeys.indexOf(colKey);
     const targetIndex = index + direction;
     if (index === -1 || targetIndex < 0 || targetIndex >= currentKeys.length) return;
@@ -966,7 +952,7 @@ export default function MatchTrackerView({
     setDraggedColKey(null);
     setDragOverColKey(null);
     if (!fromKey || !toKey || fromKey === toKey) return;
-    const currentKeys = activeColumns.map((c) => c.key);
+    const currentKeys = availableColumns.map((c) => c.key);
     const fromIdx = currentKeys.indexOf(fromKey);
     const toIdx = currentKeys.indexOf(toKey);
     if (fromIdx === -1 || toIdx === -1) return;
@@ -976,10 +962,11 @@ export default function MatchTrackerView({
     applyActiveColumnReorder(nextKeys);
   };
 
-  const isCustomColumnOrder = activeColumns.some((col, idx) => {
-    const defaultActive = DEFAULT_COLUMN_ORDER.filter((k) => columnDefs[k]?.enabled);
-    return col.key !== defaultActive[idx];
-  });
+  const isCustomColumnOrder =
+    availableColumns.some((col, idx) => {
+      const defaultActive = DEFAULT_COLUMN_ORDER.filter((k) => columnDefs[k]?.enabled);
+      return col.key !== defaultActive[idx];
+    }) || availableColumns.some((col) => hiddenColumns.includes(col.key));
 
   const timeline = computeTimelineWithScores(goalEvents, activeMatch.opponent, squad);
 
@@ -1380,6 +1367,7 @@ export default function MatchTrackerView({
                Table Mode (Compact Single-Row View with Sticky Player Column)
                ======================================= */
             <div className="stats-table-wrapper">
+              <div className="stats-table-grid">
               <div className="stats-header">
                 <div className="stat-player-col">
                   <span>Player</span>
@@ -1478,6 +1466,7 @@ export default function MatchTrackerView({
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
 
@@ -2093,21 +2082,24 @@ export default function MatchTrackerView({
               </div>
 
               <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '0.9rem' }}>
-                Move your most-used stat trackers to the top so they appear first in both Cards and Table views.
+                Reorder or uncheck stat columns to customize your tracker in both Cards and Table views.
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                {activeColumns.map((col, idx) => {
+                {availableColumns.map((col, idx) => {
                   const ColIcon = col.icon;
                   const isFirst = idx === 0;
-                  const isLast = idx === activeColumns.length - 1;
+                  const isLast = idx === availableColumns.length - 1;
                   const isDragged = draggedColKey === col.key;
                   const isDragOver = dragOverColKey === col.key && draggedColKey !== col.key;
+                  const isVisible = !hiddenColumns.includes(col.key);
+                  const isOnlyVisible = isVisible && activeColumns.length <= 1;
 
                   return (
                     <div
                       key={col.key}
                       className={`col-order-item ${isDragged ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
+                      style={{ opacity: isVisible ? 1 : 0.55 }}
                       draggable
                       onDragStart={() => setDraggedColKey(col.key)}
                       onDragOver={(e) => {
@@ -2128,8 +2120,20 @@ export default function MatchTrackerView({
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0, flex: 1 }}>
                         <GripVertical size={15} style={{ color: 'var(--color-text-light)', cursor: 'grab', flexShrink: 0 }} />
+                        <input
+                          type="checkbox"
+                          checked={isVisible}
+                          disabled={isOnlyVisible}
+                          onChange={() => toggleColumnVisibility(col.key)}
+                          title={isOnlyVisible ? 'At least one column must remain visible' : `Show/hide ${col.shortLabel}`}
+                          style={{ accentColor: 'var(--color-primary)', cursor: isOnlyVisible ? 'not-allowed' : 'pointer', margin: 0, flexShrink: 0 }}
+                        />
                         <span className="col-order-rank">{idx + 1}</span>
-                        <span className={`stat-control-label ${col.key}`} style={{ marginBottom: 0, fontSize: '0.82rem' }}>
+                        <span
+                          className={`stat-control-label ${col.key}`}
+                          style={{ marginBottom: 0, fontSize: '0.82rem', cursor: isOnlyVisible ? 'default' : 'pointer' }}
+                          onClick={() => !isOnlyVisible && toggleColumnVisibility(col.key)}
+                        >
                           <ColIcon size={14} /> {col.fullLabel}
                         </span>
                       </div>
@@ -2165,10 +2169,13 @@ export default function MatchTrackerView({
                 {isCustomColumnOrder && (
                   <button
                     type="button"
-                    onClick={() => updateColumnOrder([...DEFAULT_COLUMN_ORDER])}
+                    onClick={() => {
+                      updateColumnOrder([...DEFAULT_COLUMN_ORDER]);
+                      updateHiddenColumns([]);
+                    }}
                     className="btn btn-secondary"
                     style={{ width: 'auto', padding: '0.6rem 0.9rem', fontSize: '0.82rem' }}
-                    title="Reset to default column order"
+                    title="Reset to default columns and order"
                   >
                     <RotateCcw size={14} /> Reset
                   </button>
