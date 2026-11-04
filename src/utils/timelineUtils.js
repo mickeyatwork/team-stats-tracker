@@ -2,6 +2,31 @@
  * Helper utilities for managing match goal events, chronological order, and running scores.
  */
 
+const LOCAL_TIMELINE_PREFIX = 'match_timeline_events_';
+
+export function getLocalTimelineEvents(matchId) {
+  if (!matchId || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`${LOCAL_TIMELINE_PREFIX}${matchId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return [];
+}
+
+export function saveLocalTimelineEvents(matchId, events = []) {
+  if (!matchId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`${LOCAL_TIMELINE_PREFIX}${matchId}`, JSON.stringify(events));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 /**
  * Computes running scores and metadata for a sorted list of goal events.
  * 
@@ -24,8 +49,8 @@ export function computeTimelineWithScores(events = [], opponentName = 'Oppositio
       teamScore += 1;
     }
 
-    const scorerPlayer = !isOpponent && !isUnassigned ? squad.find((p) => p.id === event.scorer_id) : null;
-    const assisterPlayer = event.assister_id ? squad.find((p) => p.id === event.assister_id) : null;
+    const scorerPlayer = !isOpponent && !isUnassigned ? squad.find((p) => String(p.id) === String(event.scorer_id)) : null;
+    const assisterPlayer = event.assister_id ? squad.find((p) => String(p.id) === String(event.assister_id)) : null;
 
     return {
       ...event,
@@ -88,12 +113,24 @@ export function reorderTimelineEvents(events, fromIndex, toIndex, baseDate = new
  * Newly missing events are appended AFTER any existing events so they are not dumped at midnight.
  * 
  * @param {Object} match - The match object with team_goals, opponent_goals, stats
- * @param {Array} playersInMatch - Players array with their goals
+ * @param {Array} playersInMatch - Players array with their goals and assists
  * @param {Array} existingEvents - Existing goal_events for this match
  * @returns {Array} List of new event objects to insert
  */
 export function generateMissingTimelineEvents(match, playersInMatch = [], existingEvents = []) {
+  if (!match) return [];
   const newEventsToInsert = [];
+
+  const normalizedPlayers =
+    Array.isArray(playersInMatch) && playersInMatch.length > 0
+      ? playersInMatch
+      : match.stats
+        ? Object.entries(match.stats).map(([id, st]) => ({
+            id,
+            goals: st?.goals || 0,
+            assists: st?.assists || 0
+          }))
+        : [];
 
   // Find reference timestamp for newly added missing events:
   // If there are already events with timestamps, append new events AFTER them!
@@ -125,8 +162,8 @@ export function generateMissingTimelineEvents(match, playersInMatch = [], existi
   let timeOffsetCounter = 0;
 
   // 1. Account for player goals
-  playersInMatch.forEach((player) => {
-    const existingPlayerCount = existingEvents.filter((e) => e.scorer_id === player.id).length;
+  normalizedPlayers.forEach((player) => {
+    const existingPlayerCount = existingEvents.filter((e) => String(e.scorer_id) === String(player.id)).length;
     const missingCount = Math.max(0, (player.goals || 0) - existingPlayerCount);
 
     for (let i = 0; i < missingCount; i++) {
@@ -155,6 +192,29 @@ export function generateMissingTimelineEvents(match, playersInMatch = [], existi
     timeOffsetCounter++;
   }
 
+  // Pair any unlinked player assists from match stats onto newly generated team goals
+  const assistPool = [];
+  normalizedPlayers.forEach((player) => {
+    const existingAssistCount = existingEvents.filter((e) => String(e.assister_id) === String(player.id)).length;
+    const missingAssists = Math.max(0, (player.assists || 0) - existingAssistCount);
+    for (let i = 0; i < missingAssists; i++) {
+      assistPool.push(player.id);
+    }
+  });
+
+  if (assistPool.length > 0) {
+    newEventsToInsert.forEach((evt) => {
+      if (evt.scorer_id === 'OPPONENT' || evt.assister_id || assistPool.length === 0) return;
+      const diffIdx = assistPool.findIndex((aid) => String(aid) !== String(evt.scorer_id));
+      if (diffIdx !== -1) {
+        evt.assister_id = assistPool[diffIdx];
+        assistPool.splice(diffIdx, 1);
+      } else if (evt.scorer_id === 'UNASSIGNED') {
+        evt.assister_id = assistPool.shift();
+      }
+    });
+  }
+
   // 3. Account for opponent goals
   const existingOpponentCount = existingEvents.filter((e) => e.scorer_id === 'OPPONENT').length;
   const missingOpponentCount = Math.max(0, (match.opponent_goals || 0) - existingOpponentCount);
@@ -170,4 +230,84 @@ export function generateMissingTimelineEvents(match, playersInMatch = [], existi
   }
 
   return newEventsToInsert;
+}
+
+/**
+ * Fetches goal_events for a match from Supabase, falling back to local/cached events
+ * and auto-generating any missing timeline events from the match's recorded goals/stats.
+ */
+export async function resolveMatchTimelineEvents(supabaseClient, match, playersInMatch = [], fallbackEvents = []) {
+  if (!match?.id) return [];
+
+  let dbEvents = null;
+  if (supabaseClient) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('goal_events')
+        .select('*')
+        .eq('match_id', match.id)
+        .order('created_at', { ascending: true });
+
+      if (!error && Array.isArray(data)) {
+        dbEvents = data;
+      } else {
+        const retry = await supabaseClient
+          .from('goal_events')
+          .select('*')
+          .eq('match_id', match.id);
+        if (!retry.error && Array.isArray(retry.data)) {
+          dbEvents = retry.data;
+        }
+      }
+    } catch {
+      // ignore network error and fall back
+    }
+  }
+
+  const localCached = getLocalTimelineEvents(match.id);
+  const propFallback = Array.isArray(fallbackEvents)
+    ? fallbackEvents.filter((e) => String(e.match_id) === String(match.id))
+    : [];
+
+  let currentEvents =
+    dbEvents && dbEvents.length > 0
+      ? dbEvents
+      : localCached.length > 0
+        ? localCached
+        : propFallback;
+
+  const missingEvents = generateMissingTimelineEvents(match, playersInMatch, currentEvents);
+
+  if (missingEvents.length > 0) {
+    let inserted = null;
+    if (supabaseClient) {
+      try {
+        const { data, error } = await supabaseClient
+          .from('goal_events')
+          .insert(missingEvents)
+          .select();
+        if (!error && Array.isArray(data) && data.length > 0) {
+          inserted = data;
+        }
+      } catch {
+        // fallback to local synthetic events if insert fails
+      }
+    }
+
+    const appended =
+      inserted ||
+      missingEvents.map((evt, idx) => ({
+        ...evt,
+        id: `synthetic-${match.id}-${ currentEvents.length + idx + 1 }-${new Date(evt.created_at).getTime()}`
+      }));
+
+    currentEvents = [...currentEvents, ...appended];
+  }
+
+  const sorted = [...currentEvents].sort(
+    (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+  );
+
+  saveLocalTimelineEvents(match.id, sorted);
+  return sorted;
 }

@@ -2,7 +2,13 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
-import { computeTimelineWithScores, reorderTimelineEvents } from '../utils/timelineUtils';
+import {
+  computeTimelineWithScores,
+  reorderTimelineEvents,
+  resolveMatchTimelineEvents,
+  getLocalTimelineEvents,
+  saveLocalTimelineEvents
+} from '../utils/timelineUtils';
 import { parseTournament, getTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
 import {
@@ -88,7 +94,14 @@ export default function MatchTrackerView({
   };
 
   // Timeline State
-  const [goalEvents, setGoalEvents] = useState([]);
+  const [goalEvents, setGoalEvents] = useState(() => {
+    if (!activeMatch?.id) return [];
+    const fromProps = Array.isArray(allGoalEvents)
+      ? allGoalEvents.filter((e) => String(e.match_id) === String(activeMatch.id))
+      : [];
+    if (fromProps.length > 0) return fromProps;
+    return getLocalTimelineEvents(activeMatch.id);
+  });
   const [_attemptEvents, setAttemptEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [showTimeline, setShowTimeline] = useState(true);
@@ -103,16 +116,16 @@ export default function MatchTrackerView({
     saveUserPreferences({ tracker_view_mode: mode });
   };
 
-  // Fetch goal events for active match
+  // Fetch goal events for active match (with fallback to match stats if missing)
   const fetchGoalEvents = async () => {
     setLoadingEvents(true);
-    const { data, error } = await supabase
-      .from('goal_events')
-      .select('*')
-      .eq('match_id', activeMatch.id)
-      .order('created_at', { ascending: true });
-    if (!error && data) {
-      setGoalEvents(data);
+    const resolved = await resolveMatchTimelineEvents(supabase, activeMatch, [], allGoalEvents || []);
+    setGoalEvents(resolved);
+    if (setAllGoalEvents && activeMatch?.id) {
+      setAllGoalEvents((prev) => {
+        const others = (prev || []).filter((e) => String(e.match_id) !== String(activeMatch.id));
+        return [...others, ...resolved];
+      });
     }
     setLoadingEvents(false);
   };
@@ -166,10 +179,13 @@ export default function MatchTrackerView({
         created_at: new Date().toISOString()
       };
       const { data, error } = await supabase.from('goal_events').insert([newEvent]).select().single();
-      if (!error && data) {
-        setGoalEvents((prev) => [...prev, data]);
-        if (setAllGoalEvents) setAllGoalEvents((prev) => [...prev, data]);
-      }
+      const savedEvt = !error && data ? data : { ...newEvent, id: `local-${matchId}-${Date.now()}` };
+      setGoalEvents((prev) => {
+        const next = [...prev, savedEvt];
+        saveLocalTimelineEvents(matchId, next);
+        return next;
+      });
+      if (setAllGoalEvents) setAllGoalEvents((prev) => [...(prev || []), savedEvt]);
     } else if (delta < 0) {
       // Decrementing from the scoreboard: remove latest goal of this team
       const isTeam = team === 'team_goals';
@@ -502,17 +518,21 @@ export default function MatchTrackerView({
     }
 
     // Log the goal event in the database
-    const { data: newEvt } = await supabase.from('goal_events').insert([{
+    const evtPayload = {
       match_id: activeMatch.id,
       scorer_id: scorerId,
       assister_id: assisterId,
       created_at: new Date().toISOString()
-    }]).select().single();
+    };
+    const { data: newEvt, error: evtError } = await supabase.from('goal_events').insert([evtPayload]).select().single();
+    const resolvedEvt = !evtError && newEvt ? newEvt : { ...evtPayload, id: `local-${activeMatch.id}-${Date.now()}` };
 
-    if (newEvt) {
-      setGoalEvents((prev) => [...prev, newEvt]);
-      if (setAllGoalEvents) setAllGoalEvents((prev) => [...prev, newEvt]);
-    }
+    setGoalEvents((prev) => {
+      const next = [...prev, resolvedEvt];
+      saveLocalTimelineEvents(activeMatch.id, next);
+      return next;
+    });
+    if (setAllGoalEvents) setAllGoalEvents((prev) => [...(prev || []), resolvedEvt]);
 
     // Also log to attempt_events as scored if attempts tracking is enabled
     if (showAttempts) {
@@ -549,6 +569,8 @@ export default function MatchTrackerView({
       
     if (data && data.length > 0) {
       eventToDelete = data[0];
+    } else {
+      eventToDelete = [...goalEvents].reverse().find((e) => String(e.scorer_id) === String(playerId)) || null;
     }
 
     const newTeamGoals = Math.max(0, m.team_goals - 1);
@@ -608,7 +630,11 @@ export default function MatchTrackerView({
 
     if (eventToDelete) {
       await supabase.from('goal_events').delete().eq('id', eventToDelete.id);
-      setGoalEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
+      setGoalEvents((prev) => {
+        const next = prev.filter((e) => e.id !== eventToDelete.id);
+        saveLocalTimelineEvents(activeMatch.id, next);
+        return next;
+      });
       if (setAllGoalEvents) setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
 
       if (showAttempts) {
@@ -663,6 +689,7 @@ export default function MatchTrackerView({
     setGoalEvents((prev) => {
       if (toIndex < 0 || toIndex >= prev.length) return prev;
       const reordered = reorderTimelineEvents(prev, fromIndex, toIndex, activeMatch.date);
+      saveLocalTimelineEvents(activeMatch.id, reordered);
       if (setAllGoalEvents) {
         setAllGoalEvents((allPrev) => {
           const others = allPrev.filter((e) => e.match_id !== activeMatch.id);
@@ -678,7 +705,11 @@ export default function MatchTrackerView({
     const eventToDelete = goalEvents.find((e) => e.id === eventId);
     if (!eventToDelete) return;
 
-    setGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
+    setGoalEvents((prev) => {
+      const next = prev.filter((e) => e.id !== eventId);
+      saveLocalTimelineEvents(activeMatch.id, next);
+      return next;
+    });
     if (setAllGoalEvents) setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
 
     await supabase.from('goal_events').delete().eq('id', eventId);
@@ -838,7 +869,11 @@ export default function MatchTrackerView({
       .update({ scorer_id: scorerId, assister_id: assisterId })
       .eq('id', eventId);
 
-    setGoalEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, scorer_id: scorerId, assister_id: assisterId } : e)));
+    setGoalEvents((prev) => {
+      const next = prev.map((e) => (e.id === eventId ? { ...e, scorer_id: scorerId, assister_id: assisterId } : e));
+      saveLocalTimelineEvents(activeMatch.id, next);
+      return next;
+    });
     if (setAllGoalEvents) {
       setAllGoalEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, scorer_id: scorerId, assister_id: assisterId } : e)));
     }
