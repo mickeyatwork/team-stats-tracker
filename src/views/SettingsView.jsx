@@ -287,7 +287,7 @@ export default function SettingsView({
   const activeClub = allClubs.find((c) => c.id === teamInfo?.club_id);
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-settings">
       <TopNav
         title="Settings"
         onBack={() => setCurrentView('matches')}
@@ -611,7 +611,7 @@ export default function SettingsView({
         {isAdmin && settingsTab === 'admin' && (
           <>
             <div className="card">
-              <div className="flex-between mb-2">
+              <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
                 <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
                   <Edit3 size={18} color="var(--color-primary)" /> Team Profile &amp; Squad Settings
                 </h2>
@@ -620,7 +620,7 @@ export default function SettingsView({
                     type="button"
                     onClick={() => setShowClubModal(true)}
                     className="btn btn-secondary flex-row gap-1"
-                    style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem' }}
+                    style={{ width: 'auto', fontSize: '0.78rem', padding: '0.35rem 0.7rem', whiteSpace: 'nowrap' }}
                   >
                     <Building2 size={14} /> Manage Clubs
                   </button>
@@ -721,14 +721,14 @@ export default function SettingsView({
 
             {/* Teams & Sub-teams Switcher / Creator */}
             <div className="card mt-4">
-              <div className="flex-between mb-2">
+              <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
                 <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
                   <Shield size={18} color="var(--color-secondary)" /> Teams &amp; Seasons in Club
                 </h2>
                 <button
                   onClick={onAddNewTeam || (() => setShowAddTeamModal(true))}
                   className="btn btn-secondary"
-                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
                 >
                   <Plus size={14} /> Add Team / Season
                 </button>
@@ -1213,7 +1213,7 @@ export default function SettingsView({
                     marginBottom: '1rem'
                   }}
                 >
-                  <div className="flex-between mb-2">
+                  <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
                     <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
                       Performance Point Weights
                     </div>
@@ -1221,7 +1221,7 @@ export default function SettingsView({
                       type="button"
                       onClick={() => setPerformanceWeightsInput({ ...DEFAULT_PERFORMANCE_WEIGHTS })}
                       className="btn btn-secondary"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}
+                      style={{ width: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.72rem', whiteSpace: 'nowrap' }}
                     >
                       Reset Defaults
                     </button>

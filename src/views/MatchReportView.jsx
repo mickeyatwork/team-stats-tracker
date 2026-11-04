@@ -589,7 +589,7 @@ export default function MatchReportView({
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-report">
       <TopNav
         title="Match Report"
         onBack={() => {

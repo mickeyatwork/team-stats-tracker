@@ -1065,7 +1065,7 @@ export default function StatsView({
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-stats">
       <TopNav
         title="Team Analytics"
         showTabs={true}
