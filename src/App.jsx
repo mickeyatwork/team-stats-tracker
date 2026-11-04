@@ -14,6 +14,15 @@ import { getSavedTheme, applyTheme } from './utils/themePreferences';
 import { fetchUserPreferences, getSavedMatchRoles } from './utils/userPreferences';
 import { generateMissingTimelineEvents, getLocalTimelineEvents } from './utils/timelineUtils';
 import {
+  saveOfflineTeamsCache,
+  getOfflineTeamsCache,
+  saveOfflineTeamDataCache,
+  getOfflineTeamDataCache,
+  mergeOfflineDirtyMatches,
+  flushOfflineSyncQueue,
+  markServerUnreachable
+} from './utils/offlineSync';
+import {
   ROLES,
   USER_STATUS,
   isDevAdmin
@@ -43,6 +52,11 @@ export default function App() {
   const [matches, setMatches] = useState([]);
   const [goalEvents, setGoalEvents] = useState([]);
 
+  // All-Seasons Data State (for "All Time (All Seasons)" analytics view)
+  const [allSeasonsSquad, setAllSeasonsSquad] = useState([]);
+  const [allSeasonsMatches, setAllSeasonsMatches] = useState([]);
+  const [allSeasonsGoalEvents, setAllSeasonsGoalEvents] = useState([]);
+
   // Navigation State
   const [currentView, setCurrentView] = useState('matches');
   const [activeMatchId, setActiveMatchId] = useState(null);
@@ -54,9 +68,41 @@ export default function App() {
   const [newTeamName, setNewTeamName] = useState('');
   const [newSeasonName, setNewSeasonName] = useState('');
   const [newTeamClubId, setNewTeamClubId] = useState('');
+  const [carryOverSquad, setCarryOverSquad] = useState(true);
   const [addTeamLoading, setAddTeamLoading] = useState(false);
 
   const activeMatch = matches.find((m) => m.id === activeMatchId);
+
+  // Keep offline cache updated whenever active team's squad or matches change
+  useEffect(() => {
+    if (teamInfo?.id && (squad.length > 0 || matches.length > 0)) {
+      saveOfflineTeamDataCache(teamInfo.id, { squad, matches });
+    }
+  }, [teamInfo?.id, squad, matches]);
+
+  // Automatically flush offline queue when connectivity returns or periodically if items are pending
+  useEffect(() => {
+    if (!session) return;
+
+    const runSync = () => {
+      flushOfflineSyncQueue(supabase, {
+        onMatchIdRemapped: (oldOfflineId, createdDbMatch) => {
+          setMatches((prev) =>
+            prev.map((m) => (m.id === oldOfflineId ? { ...createdDbMatch, stats: m.stats || createdDbMatch.stats } : m))
+          );
+          setActiveMatchId((prevId) => (prevId === oldOfflineId ? createdDbMatch.id : prevId));
+        }
+      });
+    };
+
+    runSync();
+    window.addEventListener('online', runSync);
+    const interval = setInterval(runSync, 20000);
+    return () => {
+      window.removeEventListener('online', runSync);
+      clearInterval(interval);
+    };
+  }, [session]);
 
   // Auth Subscription
   useEffect(() => {
@@ -212,6 +258,8 @@ export default function App() {
           });
 
         setAllTeams(enrichedTeams);
+        saveOfflineTeamsCache(enrichedTeams, clubsList);
+        markServerUnreachable(false);
 
         // Retain current team if valid, otherwise select most recent season's team
         setTeamInfo((prev) => {
@@ -221,11 +269,26 @@ export default function App() {
           return enrichedTeams[0];
         });
       } else {
-        setAllTeams([]);
-        setTeamInfo(null);
+        const cached = getOfflineTeamsCache();
+        if (cached.teams && cached.teams.length > 0 && teamError) {
+          markServerUnreachable(true);
+          setAllTeams(cached.teams);
+          if (cached.clubs?.length > 0) setAllClubs(cached.clubs);
+          setTeamInfo((prev) => prev || cached.teams[0]);
+        } else {
+          setAllTeams([]);
+          setTeamInfo(null);
+        }
       }
     } catch (error) {
       console.error('loadUserContext exception:', error);
+      const cached = getOfflineTeamsCache();
+      if (cached.teams && cached.teams.length > 0) {
+        markServerUnreachable(true);
+        setAllTeams(cached.teams);
+        if (cached.clubs?.length > 0) setAllClubs(cached.clubs);
+        setTeamInfo((prev) => prev || cached.teams[0]);
+      }
     } finally {
       setIsAppLoading(false);
     }
@@ -240,12 +303,38 @@ export default function App() {
 
   const fetchSquadAndMatches = async () => {
     try {
-      // Squad: fetch and filter to active team (handling both team_id and legacy null)
+      // Flush any pending offline changes first if online
+      await flushOfflineSyncQueue(supabase);
+
+      // Identify earliest/legacy team ID so legacy records with null team_id only belong to the original season
+      const accessibleTeamIds = new Set((allTeams || []).map((t) => t.id));
+      if (teamInfo?.id) accessibleTeamIds.add(teamInfo.id);
+      const legacyTeamId = allTeams && allTeams.length > 0
+        ? allTeams[allTeams.length - 1].id
+        : teamInfo?.id;
+
+      // Squad: fetch and filter to active team
       const { data: squadData, error: squadError } = await supabase.from('squad').select('*');
-      if (squadError) console.error('Squad fetch error:', squadError);
+      if (squadError) {
+        console.error('Squad fetch error:', squadError);
+        markServerUnreachable(true);
+      }
       if (squadData) {
-        const scopedSquad = squadData.filter((p) => !p.team_id || p.team_id === teamInfo.id);
+        const allAccessibleSquad = squadData.filter(
+          (p) => (p.team_id && accessibleTeamIds.has(p.team_id)) || (!p.team_id && accessibleTeamIds.has(legacyTeamId))
+        );
+        setAllSeasonsSquad(allAccessibleSquad);
+
+        const scopedSquad = squadData.filter(
+          (p) => p.team_id === teamInfo.id || (!p.team_id && teamInfo.id === legacyTeamId)
+        );
         setSquad(scopedSquad);
+      } else {
+        const cached = getOfflineTeamDataCache(teamInfo.id);
+        if (cached.squad?.length > 0) {
+          setSquad(cached.squad);
+          setAllSeasonsSquad(cached.squad);
+        }
       }
 
       // Matches: fetch and filter to active team
@@ -254,51 +343,97 @@ export default function App() {
         .select('*')
         .order('date', { ascending: false });
 
-      if (matchError) console.error('Matches fetch error:', matchError);
+      if (matchError) {
+        console.error('Matches fetch error:', matchError);
+        markServerUnreachable(true);
+      }
 
       if (matchData) {
-        const scopedMatches = matchData.filter((m) => !m.team_id || m.team_id === teamInfo.id);
-
+        markServerUnreachable(false);
         const { data: statsData } = await supabase.from('match_stats').select('*');
         const { data: eventsData } = await supabase.from('goal_events').select('*');
 
-        const matchesWithStats = scopedMatches.map((m) => {
-          const matchStatsArray = statsData?.filter((s) => s.match_id === m.id) || [];
-          const savedRoles = getSavedMatchRoles(m.id);
-          const statsMap = {};
-          matchStatsArray.forEach((s) => {
-            statsMap[s.player_id] = {
-              goals: s.goals || 0,
-              assists: s.assists || 0,
-              saves: s.saves || 0,
-              attempts: s.attempts || 0,
-              defensive_contributions: s.defensive_contributions || 0,
-              is_goalkeeper: s.is_goalkeeper || false,
-              is_captain: s.is_captain ?? savedRoles.captains.includes(s.player_id),
-              is_potm: s.is_potm ?? savedRoles.potm.includes(s.player_id)
-            };
+        const enrichMatchesList = (rawMatches) =>
+          rawMatches.map((m) => {
+            const matchStatsArray = statsData?.filter((s) => s.match_id === m.id) || [];
+            const savedRoles = getSavedMatchRoles(m.id);
+            const statsMap = {};
+            matchStatsArray.forEach((s) => {
+              statsMap[s.player_id] = {
+                goals: s.goals || 0,
+                assists: s.assists || 0,
+                saves: s.saves || 0,
+                attempts: s.attempts || 0,
+                defensive_contributions: s.defensive_contributions || 0,
+                is_goalkeeper: s.is_goalkeeper || false,
+                is_captain: s.is_captain ?? savedRoles.captains.includes(s.player_id),
+                is_potm: s.is_potm ?? savedRoles.potm.includes(s.player_id)
+              };
+            });
+            return { ...m, stats: statsMap };
           });
-          return { ...m, stats: statsMap };
-        });
 
         const rawEvents = eventsData || [];
-        const resolvedAllEvents = [];
-        matchesWithStats.forEach((m) => {
-          const dbMatchEvts = rawEvents.filter((e) => String(e.match_id) === String(m.id));
-          const localEvts = getLocalTimelineEvents(m.id);
-          const baseEvts = dbMatchEvts.length > 0 ? dbMatchEvts : localEvts;
-          const missing = generateMissingTimelineEvents(m, [], baseEvts).map((evt, idx) => ({
-            ...evt,
-            id: `synthetic-${m.id}-${baseEvts.length + idx + 1}`
-          }));
-          resolvedAllEvents.push(...baseEvts, ...missing);
-        });
+        const resolveEventsForMatches = (enrichedMatchesList) => {
+          const resolved = [];
+          enrichedMatchesList.forEach((m) => {
+            const dbMatchEvts = rawEvents.filter((e) => String(e.match_id) === String(m.id));
+            const localEvts = getLocalTimelineEvents(m.id);
+            const baseEvts = dbMatchEvts.length > 0 ? dbMatchEvts : localEvts;
+            const missing = generateMissingTimelineEvents(m, [], baseEvts).map((evt, idx) => ({
+              ...evt,
+              id: `synthetic-${m.id}-${baseEvts.length + idx + 1}`
+            }));
+            resolved.push(...baseEvts, ...missing);
+          });
+          return resolved;
+        };
 
-        setGoalEvents(resolvedAllEvents);
+        // Current season matches (plus any unsynced offline matches for this season)
+        const scopedMatches = matchData.filter(
+          (m) => m.team_id === teamInfo.id || (!m.team_id && teamInfo.id === legacyTeamId)
+        );
+        const matchesWithStats = mergeOfflineDirtyMatches(enrichMatchesList(scopedMatches), teamInfo.id);
+        const resolvedCurrentEvents = resolveEventsForMatches(matchesWithStats);
+
+        setGoalEvents(resolvedCurrentEvents);
         setMatches(matchesWithStats);
+        saveOfflineTeamDataCache(teamInfo.id, { squad: squadData ? squadData.filter((p) => p.team_id === teamInfo.id || (!p.team_id && teamInfo.id === legacyTeamId)) : squad, matches: matchesWithStats });
+
+        // All seasons matches across accessible teams
+        const allAccessibleRawMatches = matchData.filter(
+          (m) => (m.team_id && accessibleTeamIds.has(m.team_id)) || (!m.team_id && accessibleTeamIds.has(legacyTeamId))
+        );
+        const allMatchesWithStats = mergeOfflineDirtyMatches(enrichMatchesList(allAccessibleRawMatches), null);
+        const resolvedAllSeasonsEvents = resolveEventsForMatches(allMatchesWithStats);
+
+        setAllSeasonsMatches(allMatchesWithStats);
+        setAllSeasonsGoalEvents(resolvedAllSeasonsEvents);
+      } else {
+        // Offline fallback using cached team data + dirty offline queue
+        const cached = getOfflineTeamDataCache(teamInfo.id);
+        const mergedOfflineMatches = mergeOfflineDirtyMatches(cached.matches || [], teamInfo.id);
+        const fallbackEvents = [];
+        mergedOfflineMatches.forEach((m) => {
+          const localEvts = getLocalTimelineEvents(m.id);
+          const missing = generateMissingTimelineEvents(m, [], localEvts).map((evt, idx) => ({
+            ...evt,
+            id: `synthetic-${m.id}-${localEvts.length + idx + 1}`
+          }));
+          fallbackEvents.push(...localEvts, ...missing);
+        });
+        setMatches(mergedOfflineMatches);
+        setGoalEvents(fallbackEvents);
+        setAllSeasonsMatches(mergedOfflineMatches);
+        setAllSeasonsGoalEvents(fallbackEvents);
       }
     } catch (error) {
       console.error('fetchSquadAndMatches exception:', error);
+      markServerUnreachable(true);
+      const cached = getOfflineTeamDataCache(teamInfo?.id);
+      if (cached.squad?.length > 0) setSquad(cached.squad);
+      const mergedOfflineMatches = mergeOfflineDirtyMatches(cached.matches || [], teamInfo?.id);
+      setMatches(mergedOfflineMatches);
     }
   };
 
@@ -307,7 +442,10 @@ export default function App() {
   };
 
   const handleAddNewTeam = () => {
-    setNewTeamClubId(currentUserProfile?.club_id || (allClubs[0]?.id || ''));
+    setNewTeamName(teamInfo?.name || '');
+    setNewSeasonName('');
+    setCarryOverSquad(true);
+    setNewTeamClubId(currentUserProfile?.club_id || teamInfo?.club_id || (allClubs[0]?.id || ''));
     setShowAddTeamModal(true);
   };
 
@@ -325,11 +463,20 @@ export default function App() {
       name: newTeamName.trim(),
       season: newSeasonName.trim(),
       club_id: targetClubId,
-      hide_positions: false
+      hide_positions: teamInfo?.hide_positions || false,
+      ...(teamInfo?.settings ? { settings: teamInfo.settings } : {})
     };
 
     try {
-      const { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
+      let { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
+
+      // Fallback if settings column does not exist on team table
+      if (error && (error.message?.includes('settings') || error.code === 'PGRST204')) {
+        const { settings: _omitSettings, ...fallbackTeamObj } = newTeamObj;
+        const retry = await supabase.from('team').insert([fallbackTeamObj]).select().single();
+        data = retry.data;
+        error = retry.error;
+      }
 
       if (error) {
         alert(`Error adding team: ${error.message}`);
@@ -338,6 +485,31 @@ export default function App() {
       }
 
       if (data) {
+        if (currentUserProfile?.id) {
+          try {
+            await supabase.from('user_team_assignments').insert([
+              { user_profile_id: currentUserProfile.id, team_id: data.id }
+            ]);
+          } catch {
+            // ignore assignment error if already assigned or table not used
+          }
+        }
+
+        // Carry over current squad players to the new season if checked
+        if (carryOverSquad && squad.length > 0) {
+          const clonedPlayers = squad.map((p) => ({
+            user_id: session.user.id,
+            team_id: data.id,
+            name: p.name,
+            position: p.position || 'FW'
+          }));
+          try {
+            await supabase.from('squad').insert(clonedPlayers);
+          } catch (cloneErr) {
+            console.warn('Could not clone squad to new season:', cloneErr);
+          }
+        }
+
         const enrichedTeam = {
           ...data,
           ...getTeamFeatures(data)
@@ -463,6 +635,9 @@ export default function App() {
           onAddNewTeam={handleAddNewTeam}
           setCurrentView={setCurrentView}
           goalEvents={goalEvents}
+          allSeasonsMatches={allSeasonsMatches}
+          allSeasonsSquad={allSeasonsSquad}
+          allSeasonsGoalEvents={allSeasonsGoalEvents}
         />
       );
     }
@@ -603,9 +778,32 @@ export default function App() {
                 </div>
               )}
 
+              {squad.length > 0 && (
+                <div className="input-group" style={{ marginTop: '0.5rem' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      color: 'var(--color-text-main)'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={carryOverSquad}
+                      onChange={(e) => setCarryOverSquad(e.target.checked)}
+                      style={{ accentColor: 'var(--color-primary)', width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <span>Carry over current squad players &amp; settings to this new season</span>
+                  </label>
+                </div>
+              )}
+
               <div className="flex-row gap-2 mt-4">
                 <button type="submit" disabled={addTeamLoading} className="btn btn-primary" style={{ flex: 1 }}>
-                  {addTeamLoading ? 'Saving...' : 'Create Team'}
+                  {addTeamLoading ? 'Saving...' : 'Create Season'}
                 </button>
                 <button
                   type="button"

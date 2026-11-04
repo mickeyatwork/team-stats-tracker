@@ -5,6 +5,7 @@ import { supabase } from '../supabaseClient';
 import { parseTournament, encodeTournament, KNOCKOUT_ROUNDS, isTournamentFinished, setTournamentFinishedStatus, saveTournament, getTournamentAvailablePlayers, setTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
 import { isPlayerDefaultOff } from '../utils/playerPreferences';
+import { queueOfflineMatchSnapshot, isOfflineId, markServerUnreachable } from '../utils/offlineSync';
 
 export default function TournamentView({
   tournamentName,
@@ -174,8 +175,44 @@ export default function TournamentView({
         status: 'active'
       };
 
-      const { data, error } = await supabase.from('matches').insert([dbMatch]).select();
-      if (error) throw error;
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      let data = null;
+      let error = null;
+
+      if (!isOffline) {
+        try {
+          const res = await supabase.from('matches').insert([dbMatch]).select();
+          data = res.data;
+          error = res.error;
+        } catch (err) {
+          error = err;
+        }
+      }
+
+      if (isOffline || error || !data || !data[0]) {
+        if (error) {
+          console.warn('Server unavailable when creating tournament match — saving offline:', error);
+          markServerUnreachable(true);
+        }
+        const offlineMatch = {
+          ...dbMatch,
+          id: `offline-match-${Date.now()}`,
+          created_at: new Date().toISOString(),
+          stats: initialStats
+        };
+        queueOfflineMatchSnapshot(offlineMatch);
+        setMatches([offlineMatch, ...matches]);
+
+        setShowAddMatchModal(false);
+        setOpponent('');
+        setCustomRoundName('');
+        setMatchVariant(getDefaultMatchVariant());
+
+        setActiveMatchId(offlineMatch.id);
+        if (setReturnToTournament) setReturnToTournament(tournamentName);
+        setCurrentView('match_tracker');
+        return;
+      }
 
       if (data && data[0]) {
         const newDbMatch = data[0];
@@ -202,9 +239,12 @@ export default function TournamentView({
           const retry = await supabase.from('match_stats').insert(fallbackStats);
           statsErr = retry.error;
         }
-        if (statsErr) console.error('Error inserting tournament match stats:', statsErr);
 
         const matchWithStats = { ...newDbMatch, stats: initialStats };
+        if (statsErr) {
+          console.warn('Error inserting tournament match stats — queued for sync:', statsErr);
+          queueOfflineMatchSnapshot(matchWithStats);
+        }
         setMatches([matchWithStats, ...matches]);
 
         setShowAddMatchModal(false);
@@ -233,8 +273,17 @@ export default function TournamentView({
 
   const resumeMatch = async (matchId, e) => {
     if (e) e.stopPropagation();
+    const target = matches.find((m) => m.id === matchId);
     setMatches((prev) => prev.map((m) => (m.id === matchId ? { ...m, status: 'active' } : m)));
-    await supabase.from('matches').update({ status: 'active' }).eq('id', matchId);
+    if (isOfflineId(matchId) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      if (target) queueOfflineMatchSnapshot({ ...target, status: 'active' });
+    } else {
+      const { error } = await supabase.from('matches').update({ status: 'active' }).eq('id', matchId);
+      if (error && target) {
+        markServerUnreachable(true);
+        queueOfflineMatchSnapshot({ ...target, status: 'active' });
+      }
+    }
     openMatch(matchId, 'match_tracker');
   };
 
@@ -278,7 +327,7 @@ export default function TournamentView({
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-tournament">
       <TopNav
         title={tournamentName || 'Tournament'}
         onBack={() => {
@@ -461,7 +510,7 @@ export default function TournamentView({
               <p style={{ margin: 0, fontSize: '0.85rem' }}>No group stage matches added yet.</p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <div className="matches-grid">
               {groupMatches.map((m) => {
                 const isWin = (m.team_goals || 0) > (m.opponent_goals || 0);
                 const isLoss = (m.team_goals || 0) < (m.opponent_goals || 0);
@@ -651,7 +700,7 @@ export default function TournamentView({
               <p style={{ margin: 0, fontSize: '0.85rem' }}>No knockout matches recorded yet.</p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <div className="matches-grid">
               {knockoutMatches.map((m) => {
                 const isWin = (m.team_goals || 0) > (m.opponent_goals || 0);
                 const isLoss = (m.team_goals || 0) < (m.opponent_goals || 0);

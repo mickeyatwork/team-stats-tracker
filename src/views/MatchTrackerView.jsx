@@ -20,6 +20,11 @@ import {
   saveUserPreferences,
   subscribeToUserPreferences
 } from '../utils/userPreferences';
+import {
+  queueOfflineMatchSnapshot,
+  isOfflineId,
+  markServerUnreachable
+} from '../utils/offlineSync';
 
 function useDebounceCallback(callback, delay) {
   const timeoutRef = useRef(null);
@@ -109,6 +114,23 @@ export default function MatchTrackerView({
   const [assignStep, setAssignStep] = useState('scorer'); // 'scorer' | 'assister'
   const [selectedScorerId, setSelectedScorerId] = useState(null);
   const reorderSaveTimerRef = useRef(null);
+  const latestStateRef = useRef({ match: activeMatch, goalEvents });
+
+  useEffect(() => {
+    latestStateRef.current = { match: activeMatch, goalEvents };
+    if (activeMatch && (isOfflineId(activeMatch.id) || (typeof navigator !== 'undefined' && !navigator.onLine))) {
+      queueOfflineMatchSnapshot(activeMatch, { goalEvents });
+    }
+  }, [activeMatch, goalEvents]);
+
+  const queueLatestOffline = (overrideMatch = null, overrideOptions = {}) => {
+    const targetMatch = overrideMatch || latestStateRef.current.match;
+    if (!targetMatch) return;
+    queueOfflineMatchSnapshot(targetMatch, {
+      goalEvents: overrideOptions.goalEvents || latestStateRef.current.goalEvents,
+      ...overrideOptions
+    });
+  };
 
   const handleSetViewMode = (mode) => {
     setViewMode(mode);
@@ -157,14 +179,28 @@ export default function MatchTrackerView({
 
   // Autosave Match Score
   const saveMatchScoreToDb = useDebounceCallback(async (matchId, teamGoals, oppGoals) => {
-    await supabase.from('matches').update({ team_goals: teamGoals, opponent_goals: oppGoals }).eq('id', matchId);
+    if (isOfflineId(matchId) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      queueLatestOffline();
+      return;
+    }
+    try {
+      const { error } = await supabase.from('matches').update({ team_goals: teamGoals, opponent_goals: oppGoals }).eq('id', matchId);
+      if (error) {
+        markServerUnreachable(true);
+        queueLatestOffline();
+      }
+    } catch {
+      markServerUnreachable(true);
+      queueLatestOffline();
+    }
   }, 1000);
 
   const updateMatchScore = async (matchId, team, delta) => {
     const m = matches.find((x) => x.id === matchId);
     if (!m) return;
     const newVal = Math.max(0, m[team] + delta);
-    setMatches(matches.map((match) => (match.id === matchId ? { ...match, [team]: newVal } : match)));
+    const updatedMatch = { ...m, [team]: newVal };
+    setMatches(matches.map((match) => (match.id === matchId ? updatedMatch : match)));
     const tGoals = team === 'team_goals' ? newVal : m.team_goals;
     const oGoals = team === 'opponent_goals' ? newVal : m.opponent_goals;
     saveMatchScoreToDb(matchId, tGoals, oGoals);
@@ -178,8 +214,23 @@ export default function MatchTrackerView({
         assister_id: null,
         created_at: new Date().toISOString()
       };
-      const { data, error } = await supabase.from('goal_events').insert([newEvent]).select().single();
-      const savedEvt = !error && data ? data : { ...newEvent, id: `local-${matchId}-${Date.now()}` };
+      let savedEvt = { ...newEvent, id: `local-${matchId}-${Date.now()}` };
+      if (!isOfflineId(matchId) && (typeof navigator === 'undefined' || navigator.onLine)) {
+        try {
+          const { data, error } = await supabase.from('goal_events').insert([newEvent]).select().single();
+          if (!error && data) {
+            savedEvt = data;
+          } else if (error) {
+            markServerUnreachable(true);
+            queueLatestOffline(updatedMatch);
+          }
+        } catch {
+          markServerUnreachable(true);
+          queueLatestOffline(updatedMatch);
+        }
+      } else {
+        queueLatestOffline(updatedMatch);
+      }
       setGoalEvents((prev) => {
         const next = [...prev, savedEvt];
         saveLocalTimelineEvents(matchId, next);
@@ -199,6 +250,11 @@ export default function MatchTrackerView({
 
   // Autosave Player Stats (Goals, Assists, Saves, Attempts, DC, GK, Captain, POTM status)
   const savePlayerStatToDb = useDebounceCallback(async (matchId, playerId, goals, assists, saves, is_goalkeeper, attempts, defensive_contributions, is_captain, is_potm) => {
+    if (isOfflineId(matchId) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      queueLatestOffline();
+      return;
+    }
+
     const payload = {
       match_id: matchId,
       player_id: playerId,
@@ -212,30 +268,43 @@ export default function MatchTrackerView({
     if (is_captain !== undefined) payload.is_captain = is_captain;
     if (is_potm !== undefined) payload.is_potm = is_potm;
 
-    let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
-    if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
-      const secondaryPayload = {
-        match_id: matchId,
-        player_id: playerId,
-        goals,
-        assists,
-        saves,
-        is_goalkeeper
-      };
-      if (attempts !== undefined) secondaryPayload.attempts = attempts;
-      if (defensive_contributions !== undefined) secondaryPayload.defensive_contributions = defensive_contributions;
-      const retry = await supabase.from('match_stats').upsert(secondaryPayload, { onConflict: 'match_id,player_id' });
-      if (retry.error && (retry.error.message?.includes('column') || retry.error.code === '42703' || retry.error.code === 'PGRST204')) {
-        const fallback = await supabase.from('match_stats').upsert(
-          { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
-          { onConflict: 'match_id,player_id' }
-        );
-        if (fallback.error) console.error('Error saving player stat (fallback):', fallback.error);
-      } else if (retry.error) {
-        console.error('Error saving player stat (retry):', retry.error);
+    try {
+      let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+      if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
+        const secondaryPayload = {
+          match_id: matchId,
+          player_id: playerId,
+          goals,
+          assists,
+          saves,
+          is_goalkeeper
+        };
+        if (attempts !== undefined) secondaryPayload.attempts = attempts;
+        if (defensive_contributions !== undefined) secondaryPayload.defensive_contributions = defensive_contributions;
+        const retry = await supabase.from('match_stats').upsert(secondaryPayload, { onConflict: 'match_id,player_id' });
+        if (retry.error && (retry.error.message?.includes('column') || retry.error.code === '42703' || retry.error.code === 'PGRST204')) {
+          const fallback = await supabase.from('match_stats').upsert(
+            { match_id: matchId, player_id: playerId, goals, assists, saves, is_goalkeeper },
+            { onConflict: 'match_id,player_id' }
+          );
+          if (fallback.error) {
+            console.warn('Error saving player stat (fallback) — queued offline:', fallback.error);
+            markServerUnreachable(true);
+            queueLatestOffline();
+          }
+        } else if (retry.error) {
+          console.warn('Error saving player stat (retry) — queued offline:', retry.error);
+          markServerUnreachable(true);
+          queueLatestOffline();
+        }
+      } else if (error) {
+        console.warn('Error saving player stat — queued offline:', error);
+        markServerUnreachable(true);
+        queueLatestOffline();
       }
-    } else if (error) {
-      console.error('Error saving player stat:', error);
+    } catch {
+      markServerUnreachable(true);
+      queueLatestOffline();
     }
   }, 1000);
 
@@ -478,6 +547,10 @@ export default function MatchTrackerView({
     // Save directly to DB to avoid debounce cancellation
     // Helper to safely upsert
     const upsertSafe = async (pid, st) => {
+      if (isOfflineId(activeMatch.id) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        queueLatestOffline();
+        return;
+      }
       const payload = {
         match_id: activeMatch.id,
         player_id: pid,
@@ -489,12 +562,24 @@ export default function MatchTrackerView({
       if (st.attempts !== undefined) payload.attempts = st.attempts;
       if (st.defensive_contributions !== undefined) payload.defensive_contributions = st.defensive_contributions;
 
-      let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
-      if (error && (error.message?.includes('column') || error.code === '42703')) {
-        await supabase.from('match_stats').upsert(
-          { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
-          { onConflict: 'match_id,player_id' }
-        );
+      try {
+        let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+        if (error && (error.message?.includes('column') || error.code === '42703')) {
+          const retry = await supabase.from('match_stats').upsert(
+            { match_id: activeMatch.id, player_id: pid, goals: st.goals, assists: st.assists, saves: st.saves || 0, is_goalkeeper: st.is_goalkeeper || false },
+            { onConflict: 'match_id,player_id' }
+          );
+          if (retry.error) {
+            markServerUnreachable(true);
+            queueLatestOffline();
+          }
+        } else if (error) {
+          markServerUnreachable(true);
+          queueLatestOffline();
+        }
+      } catch {
+        markServerUnreachable(true);
+        queueLatestOffline();
       }
     };
 
@@ -524,8 +609,17 @@ export default function MatchTrackerView({
       assister_id: assisterId,
       created_at: new Date().toISOString()
     };
-    const { data: newEvt, error: evtError } = await supabase.from('goal_events').insert([evtPayload]).select().single();
-    const resolvedEvt = !evtError && newEvt ? newEvt : { ...evtPayload, id: `local-${activeMatch.id}-${Date.now()}` };
+    let resolvedEvt = { ...evtPayload, id: `local-${activeMatch.id}-${Date.now()}` };
+    if (!isOfflineId(activeMatch.id) && (typeof navigator === 'undefined' || navigator.onLine)) {
+      try {
+        const { data: newEvt, error: evtError } = await supabase.from('goal_events').insert([evtPayload]).select().single();
+        if (!evtError && newEvt) {
+          resolvedEvt = newEvt;
+        }
+      } catch {
+        markServerUnreachable(true);
+      }
+    }
 
     setGoalEvents((prev) => {
       const next = [...prev, resolvedEvt];
@@ -885,8 +979,22 @@ export default function MatchTrackerView({
 
 
   const finishMatch = async (matchId) => {
+    const finishedMatch = { ...activeMatch, status: 'finished' };
     setMatches((prev) => prev.map((m) => (m.id === matchId ? { ...m, status: 'finished' } : m)));
-    await supabase.from('matches').update({ status: 'finished' }).eq('id', matchId);
+    if (isOfflineId(matchId) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      queueLatestOffline(finishedMatch);
+    } else {
+      try {
+        const { error } = await supabase.from('matches').update({ status: 'finished' }).eq('id', matchId);
+        if (error) {
+          markServerUnreachable(true);
+          queueLatestOffline(finishedMatch);
+        }
+      } catch {
+        markServerUnreachable(true);
+        queueLatestOffline(finishedMatch);
+      }
+    }
 
     const targetTourney = returnToTournament || (activeMatch?.competition === 'Tournament' && activeMatch?.tournament ? parseTournament(activeMatch.tournament).name : null);
 
@@ -903,9 +1011,18 @@ export default function MatchTrackerView({
   const saveEditedOpponent = async () => {
     if (!opponentInput.trim()) return;
     const newName = opponentInput.trim();
+    const updatedMatch = { ...activeMatch, opponent: newName };
     setMatches((prev) => prev.map((m) => (m.id === activeMatch.id ? { ...m, opponent: newName } : m)));
     setEditingOpponent(false);
-    await supabase.from('matches').update({ opponent: newName }).eq('id', activeMatch.id);
+    if (isOfflineId(activeMatch.id) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      queueLatestOffline(updatedMatch);
+    } else {
+      const { error } = await supabase.from('matches').update({ opponent: newName }).eq('id', activeMatch.id);
+      if (error) {
+        markServerUnreachable(true);
+        queueLatestOffline(updatedMatch);
+      }
+    }
   };
 
   const togglePlayerInMatch = async (playerId) => {
@@ -919,30 +1036,53 @@ export default function MatchTrackerView({
       // Add player
       const initialPlayerStats = { goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0 };
       const newStats = { ...activeMatch.stats, [playerId]: initialPlayerStats };
+      const updatedMatch = { ...activeMatch, stats: newStats };
       
       setMatches((prev) => prev.map(m => m.id === activeMatch.id ? { ...m, stats: newStats } : m));
       
+      if (isOfflineId(activeMatch.id) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        queueLatestOffline(updatedMatch);
+        return;
+      }
+
       // Upsert default stats to database with column fallback
       let { error: amendErr } = await supabase.from('match_stats').upsert(
         { match_id: activeMatch.id, player_id: playerId, goals: 0, assists: 0, saves: 0, attempts: 0, defensive_contributions: 0, is_goalkeeper: false },
         { onConflict: 'match_id,player_id' }
       );
       if (amendErr && (amendErr.message?.includes('column') || amendErr.code === '42703')) {
-        await supabase.from('match_stats').upsert(
+        const retry = await supabase.from('match_stats').upsert(
           { match_id: activeMatch.id, player_id: playerId, goals: 0, assists: 0, saves: 0, is_goalkeeper: false },
           { onConflict: 'match_id,player_id' }
         );
+        amendErr = retry.error;
+      }
+      if (amendErr) {
+        markServerUnreachable(true);
+        queueLatestOffline(updatedMatch);
       }
     }
   };
 
   const confirmRemovePlayer = async () => {
     if (!playerToRemove) return;
+    const removedPid = playerToRemove.id;
     const newStats = { ...activeMatch.stats };
-    delete newStats[playerToRemove.id];
+    delete newStats[removedPid];
+    const updatedMatch = { ...activeMatch, stats: newStats };
     setMatches((prev) => prev.map(m => m.id === activeMatch.id ? { ...m, stats: newStats } : m));
-    await supabase.from('match_stats').delete().eq('match_id', activeMatch.id).eq('player_id', playerToRemove.id);
     setPlayerToRemove(null);
+
+    if (isOfflineId(activeMatch.id) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      queueLatestOffline(updatedMatch, { removedPlayerIds: [removedPid] });
+      return;
+    }
+
+    const { error } = await supabase.from('match_stats').delete().eq('match_id', activeMatch.id).eq('player_id', removedPid);
+    if (error) {
+      markServerUnreachable(true);
+      queueLatestOffline(updatedMatch, { removedPlayerIds: [removedPid] });
+    }
   };
 
   if (!activeMatch) return null;
@@ -1115,7 +1255,7 @@ export default function MatchTrackerView({
   const timeline = computeTimelineWithScores(goalEvents, activeMatch.opponent, squad);
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-tracker">
       <TopNav
         title={
           activeMatch.competition === 'Tournament'

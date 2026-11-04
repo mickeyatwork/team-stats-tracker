@@ -5,6 +5,7 @@ import { supabase } from '../supabaseClient';
 import { groupMatchesByTournament, setTournamentFinishedStatus, saveTournament, removeSavedTournament } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
 import { getDefaultSquadSelection, isPlayerDefaultOff } from '../utils/playerPreferences';
+import { queueOfflineMatchSnapshot, isOfflineId, markServerUnreachable } from '../utils/offlineSync';
 
 export default function MatchesView({
   matches,
@@ -90,11 +91,41 @@ export default function MatchesView({
       status: 'active'
     };
 
-    const { data, error } = await supabase.from('matches').insert([dbMatch]).select();
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    let data = null;
+    let error = null;
 
-    if (error) {
-      console.error('Match insert error:', error);
-      alert(`Failed to save match: ${error.message}`);
+    if (!isOffline) {
+      try {
+        const res = await supabase.from('matches').insert([dbMatch]).select();
+        data = res.data;
+        error = res.error;
+      } catch (err) {
+        error = err;
+      }
+    }
+
+    if (isOffline || error || !data || !data[0]) {
+      if (error) {
+        console.warn('Server unavailable when creating match — saving offline:', error);
+        markServerUnreachable(true);
+      }
+      const offlineMatch = {
+        ...dbMatch,
+        id: `offline-match-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        stats: initialStats
+      };
+      queueOfflineMatchSnapshot(offlineMatch);
+      setMatches([offlineMatch, ...matches]);
+
+      setShowNewMatchCard(false);
+      setNewMatchOpponent('');
+      setNewMatchHideScore(false);
+      setNewMatchDate(new Date().toISOString().split('T')[0]);
+
+      setActiveMatchId(offlineMatch.id);
+      setCurrentView('match_tracker');
       return;
     }
 
@@ -123,11 +154,12 @@ export default function MatchesView({
         const retry = await supabase.from('match_stats').insert(fallbackStats);
         statsErr = retry.error;
       }
-      if (statsErr) {
-        console.error('Error inserting match stats:', statsErr);
-      }
 
       const matchWithStats = { ...newDbMatch, stats: initialStats };
+      if (statsErr) {
+        console.warn('Error inserting match stats — queuing for sync:', statsErr);
+        queueOfflineMatchSnapshot(matchWithStats);
+      }
       setMatches([matchWithStats, ...matches]);
 
       setShowNewMatchCard(false);
@@ -189,20 +221,29 @@ export default function MatchesView({
   const saveEditedOpponent = async (matchId, e) => {
     if (e) e.stopPropagation();
     if (!editingOpponentText.trim()) return;
+    const trimmed = editingOpponentText.trim();
+    const targetMatch = matches.find((m) => m.id === matchId);
 
     setMatches(
-      matches.map((m) => (m.id === matchId ? { ...m, opponent: editingOpponentText.trim() } : m))
+      matches.map((m) => (m.id === matchId ? { ...m, opponent: trimmed } : m))
     );
 
     setEditingOpponentMatchId(null);
 
+    if (isOfflineId(matchId) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      if (targetMatch) queueOfflineMatchSnapshot({ ...targetMatch, opponent: trimmed });
+      return;
+    }
+
     const { error } = await supabase
       .from('matches')
-      .update({ opponent: editingOpponentText.trim() })
+      .update({ opponent: trimmed })
       .eq('id', matchId);
 
     if (error) {
-      console.error('Failed to update opponent name:', error);
+      console.warn('Failed to update opponent name online — queued offline:', error);
+      markServerUnreachable(true);
+      if (targetMatch) queueOfflineMatchSnapshot({ ...targetMatch, opponent: trimmed });
     }
   };
 
@@ -219,14 +260,21 @@ export default function MatchesView({
   const executeDeleteMatch = async () => {
     if (!matchToDelete) return;
     const matchId = matchToDelete.id;
+    const targetMatch = matchToDelete;
 
     setMatches(matches.filter((m) => m.id !== matchId));
     setMatchToDelete(null);
 
+    if (isOfflineId(matchId)) {
+      queueOfflineMatchSnapshot(targetMatch, { deleted: true });
+      return;
+    }
+
     const { error } = await supabase.from('matches').delete().eq('id', matchId);
     if (error) {
-      console.error('Match delete error:', error);
-      alert(`Failed to delete match: ${error.message}`);
+      console.warn('Match delete error — queued for deletion when online:', error);
+      markServerUnreachable(true);
+      queueOfflineMatchSnapshot(targetMatch, { deleted: true });
     }
   };
 
@@ -237,8 +285,17 @@ export default function MatchesView({
 
   const resumeMatch = async (matchId, e) => {
     if (e) e.stopPropagation();
+    const targetMatch = matches.find((m) => m.id === matchId);
     setMatches(matches.map((m) => (m.id === matchId ? { ...m, status: 'active' } : m)));
-    await supabase.from('matches').update({ status: 'active' }).eq('id', matchId);
+    if (isOfflineId(matchId) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      if (targetMatch) queueOfflineMatchSnapshot({ ...targetMatch, status: 'active' });
+    } else {
+      const { error } = await supabase.from('matches').update({ status: 'active' }).eq('id', matchId);
+      if (error && targetMatch) {
+        markServerUnreachable(true);
+        queueOfflineMatchSnapshot({ ...targetMatch, status: 'active' });
+      }
+    }
     setActiveMatchId(matchId);
     setCurrentView('match_tracker');
   };
@@ -250,7 +307,7 @@ export default function MatchesView({
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-matches">
       <TopNav
         title="Matchday View"
         showTabs={true}
@@ -473,7 +530,7 @@ export default function MatchesView({
               </div>
             )}
 
-            <div className="flex-col gap-3">
+            <div className="matches-grid">
               {regularMatches.map((match) => {
                 const date = new Date(match.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
                 const isFinished = match.status === 'finished';
@@ -692,7 +749,7 @@ export default function MatchesView({
                 </button>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div className="tournaments-grid">
                 {tournaments.map((t) => (
                   <div
                     key={t.name}

@@ -83,7 +83,7 @@ export default function SquadView({
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container app-view-squad">
       <TopNav
         title="Squad Management"
         showTabs={true}
