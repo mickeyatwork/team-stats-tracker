@@ -12,6 +12,7 @@ import TournamentView from './views/TournamentView';
 import { getTeamFeatures } from './utils/featureFlags';
 import { getSavedTheme, applyTheme } from './utils/themePreferences';
 import { fetchUserPreferences, getSavedMatchRoles } from './utils/userPreferences';
+import { generateMissingTimelineEvents, getLocalTimelineEvents } from './utils/timelineUtils';
 import {
   ROLES,
   USER_STATUS,
@@ -181,13 +182,38 @@ export default function App() {
       if (teamError) console.error('Teams query error:', teamError);
 
       if (teamsData && teamsData.length > 0) {
-        const enrichedTeams = teamsData.map((t) => ({
-          ...t,
-          ...getTeamFeatures(t)
-        }));
+        const getSeasonSortScore = (seasonStr) => {
+          if (!seasonStr) return 0;
+          const nums = String(seasonStr).match(/\d+/g);
+          if (!nums || nums.length === 0) return 0;
+          const first = parseInt(nums[0], 10);
+          const firstYear = first < 100 ? 2000 + first : first;
+          let secondYear = firstYear;
+          if (nums.length > 1) {
+            const second = parseInt(nums[1], 10);
+            secondYear = second < 100 ? Math.floor(firstYear / 100) * 100 + second : second;
+          }
+          return firstYear * 10000 + secondYear;
+        };
+
+        const enrichedTeams = teamsData
+          .map((t) => ({
+            ...t,
+            ...getTeamFeatures(t)
+          }))
+          .sort((a, b) => {
+            const seasonDiff = getSeasonSortScore(b.season) - getSeasonSortScore(a.season);
+            if (seasonDiff !== 0) return seasonDiff;
+            if (b.created_at && a.created_at) {
+              const timeDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+              if (timeDiff !== 0) return timeDiff;
+            }
+            return String(b.id || '').localeCompare(String(a.id || ''), undefined, { numeric: true });
+          });
+
         setAllTeams(enrichedTeams);
 
-        // Retain current team if valid, otherwise select first accessible team
+        // Retain current team if valid, otherwise select most recent season's team
         setTeamInfo((prev) => {
           if (prev && enrichedTeams.some((t) => t.id === prev.id)) {
             return prev;
@@ -235,7 +261,6 @@ export default function App() {
 
         const { data: statsData } = await supabase.from('match_stats').select('*');
         const { data: eventsData } = await supabase.from('goal_events').select('*');
-        setGoalEvents(eventsData || []);
 
         const matchesWithStats = scopedMatches.map((m) => {
           const matchStatsArray = statsData?.filter((s) => s.match_id === m.id) || [];
@@ -255,6 +280,21 @@ export default function App() {
           });
           return { ...m, stats: statsMap };
         });
+
+        const rawEvents = eventsData || [];
+        const resolvedAllEvents = [];
+        matchesWithStats.forEach((m) => {
+          const dbMatchEvts = rawEvents.filter((e) => String(e.match_id) === String(m.id));
+          const localEvts = getLocalTimelineEvents(m.id);
+          const baseEvts = dbMatchEvts.length > 0 ? dbMatchEvts : localEvts;
+          const missing = generateMissingTimelineEvents(m, [], baseEvts).map((evt, idx) => ({
+            ...evt,
+            id: `synthetic-${m.id}-${baseEvts.length + idx + 1}`
+          }));
+          resolvedAllEvents.push(...baseEvts, ...missing);
+        });
+
+        setGoalEvents(resolvedAllEvents);
         setMatches(matchesWithStats);
       }
     } catch (error) {

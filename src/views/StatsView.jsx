@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react';
+import { useState, useMemo, useEffect, Fragment } from 'react';
 import { Target, Award, Shield, Trophy, Activity, Flame, ArrowUpDown, ChevronUp, ChevronDown, Zap, Heart, X, TrendingUp, Crosshair, ShieldCheck, CheckSquare, Filter } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import {
@@ -18,7 +18,10 @@ export default function StatsView({
   onSelectTeam,
   onAddNewTeam,
   setCurrentView,
-  goalEvents = []
+  goalEvents = [],
+  allSeasonsMatches = [],
+  allSeasonsSquad = [],
+  allSeasonsGoalEvents = []
 }) {
   // Feature switches (Admin configurable per team)
   const showMatchDynamics = isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS);
@@ -28,6 +31,98 @@ export default function StatsView({
   const showPerformancePoints = isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS);
   const perfWeights = getPerformanceWeights(teamInfo);
   const minFinisherAttempts = getMinFinisherAttempts(teamInfo);
+
+  // Season scope: 'CURRENT' (default to current season) | 'ALL_TIME' (across all seasons)
+  const [seasonScope, setSeasonScope] = useState('CURRENT');
+
+  // Unify squad, matches, and goalEvents when viewing All Time (All Seasons)
+  // so players carried over across multiple season IDs aggregate into a single record
+  const { activePoolMatches, activePoolSquad, activePoolGoalEvents } = useMemo(() => {
+    if (seasonScope !== 'ALL_TIME') {
+      return {
+        activePoolMatches: matches,
+        activePoolSquad: squad,
+        activePoolGoalEvents: goalEvents
+      };
+    }
+
+    const sourceSquad = allSeasonsSquad.length > 0 ? allSeasonsSquad : squad;
+    const sourceMatches = allSeasonsMatches.length > 0 ? allSeasonsMatches : matches;
+    const sourceEvents = allSeasonsGoalEvents.length > 0 ? allSeasonsGoalEvents : goalEvents;
+
+    // Build canonical player map by normalized name, preferring current season's player record first
+    const canonicalByName = new Map();
+    const playerIdMap = new Map();
+    const unifiedSquad = [];
+
+    // Seed with current season's squad first so current player IDs/positions take precedence
+    squad.forEach((p) => {
+      const key = (p.name || '').trim().toLowerCase();
+      if (!key) return;
+      if (!canonicalByName.has(key)) {
+        canonicalByName.set(key, p);
+        unifiedSquad.push(p);
+      }
+      playerIdMap.set(p.id, canonicalByName.get(key).id);
+    });
+
+    sourceSquad.forEach((p) => {
+      const key = (p.name || '').trim().toLowerCase();
+      if (!key) {
+        if (!playerIdMap.has(p.id)) {
+          playerIdMap.set(p.id, p.id);
+          unifiedSquad.push(p);
+        }
+        return;
+      }
+      if (!canonicalByName.has(key)) {
+        canonicalByName.set(key, p);
+        unifiedSquad.push(p);
+      }
+      playerIdMap.set(p.id, canonicalByName.get(key).id);
+    });
+
+    const remappedMatches = sourceMatches.map((m) => {
+      if (!m.stats) return m;
+      const remappedStats = {};
+      Object.entries(m.stats).forEach(([pid, stat]) => {
+        const canonicalId = playerIdMap.get(pid) || pid;
+        if (!remappedStats[canonicalId]) {
+          remappedStats[canonicalId] = { ...stat };
+        } else {
+          // Merge if two records in same match mapped to same canonical player
+          const prev = remappedStats[canonicalId];
+          remappedStats[canonicalId] = {
+            ...prev,
+            goals: (prev.goals || 0) + (stat.goals || 0),
+            assists: (prev.assists || 0) + (stat.assists || 0),
+            saves: (prev.saves || 0) + (stat.saves || 0),
+            attempts: (prev.attempts || 0) + (stat.attempts || 0),
+            defensive_contributions: (prev.defensive_contributions || 0) + (stat.defensive_contributions || 0),
+            is_goalkeeper: prev.is_goalkeeper || stat.is_goalkeeper,
+            is_potm: prev.is_potm || stat.is_potm,
+            is_captain: prev.is_captain || stat.is_captain
+          };
+        }
+      });
+      return {
+        ...m,
+        stats: remappedStats
+      };
+    });
+
+    const remappedEvents = sourceEvents.map((e) => ({
+      ...e,
+      scorer_id: e.scorer_id && playerIdMap.has(e.scorer_id) ? playerIdMap.get(e.scorer_id) : e.scorer_id,
+      assister_id: e.assister_id && playerIdMap.has(e.assister_id) ? playerIdMap.get(e.assister_id) : e.assister_id
+    }));
+
+    return {
+      activePoolMatches: remappedMatches,
+      activePoolSquad: unifiedSquad,
+      activePoolGoalEvents: remappedEvents
+    };
+  }, [seasonScope, matches, squad, goalEvents, allSeasonsMatches, allSeasonsSquad, allSeasonsGoalEvents]);
 
   // Sort state for squad breakdown table
   const [sortField, setSortField] = useState('ga'); // default sort by G+A
@@ -45,10 +140,32 @@ export default function StatsView({
   const [expandedLeaderboard, setExpandedLeaderboard] = useState(null);
 
   // Competition, Tournament & Custom Match Selection filtering
-  const [selectedCompetition, setSelectedCompetition] = useState('ALL');
+  // Default to 'League' when League matches exist for the active season, falling back to 'ALL'
+  const hasLeagueMatches = useMemo(
+    () => activePoolMatches.some((m) => m.competition === 'League'),
+    [activePoolMatches]
+  );
+  const [selectedCompetition, setSelectedCompetition] = useState(() =>
+    matches.some((m) => m.competition === 'League') ? 'League' : 'ALL'
+  );
+  const [userChoseCompetition, setUserChoseCompetition] = useState(false);
   const [selectedTournament, setSelectedTournament] = useState('ALL');
   const [showMatchSelector, setShowMatchSelector] = useState(false);
   const [selectedMatchIds, setSelectedMatchIds] = useState(null); // null = all matches in pool selected
+
+  useEffect(() => {
+    setSeasonScope('CURRENT');
+    setUserChoseCompetition(false);
+    setSelectedCompetition(matches.some((m) => m.competition === 'League') ? 'League' : 'ALL');
+    setSelectedTournament('ALL');
+    setSelectedMatchIds(null);
+  }, [teamInfo?.id]);
+
+  useEffect(() => {
+    if (!userChoseCompetition) {
+      setSelectedCompetition(hasLeagueMatches ? 'League' : 'ALL');
+    }
+  }, [hasLeagueMatches, userChoseCompetition]);
 
   const getMatchTournamentName = (m) => {
     if (m.competition !== 'Tournament' || !m.tournament) return '';
@@ -62,7 +179,7 @@ export default function StatsView({
 
   const availableCompetitions = useMemo(() => {
     const set = new Set();
-    matches.forEach((m) => {
+    activePoolMatches.forEach((m) => {
       if (m.competition) set.add(m.competition);
     });
     const order = ['League', 'Cup', 'Tournament', 'Friendly'];
@@ -71,19 +188,19 @@ export default function StatsView({
       if (!result.includes(c)) result.push(c);
     });
     return result;
-  }, [matches]);
+  }, [activePoolMatches]);
 
   const availableTournaments = useMemo(() => {
     const set = new Set();
-    matches.forEach((m) => {
+    activePoolMatches.forEach((m) => {
       const tName = getMatchTournamentName(m);
       if (tName) set.add(tName);
     });
     return Array.from(set);
-  }, [matches]);
+  }, [activePoolMatches]);
 
   const competitionFilteredMatches = useMemo(() => {
-    return matches.filter((m) => {
+    return activePoolMatches.filter((m) => {
       if (selectedCompetition !== 'ALL' && m.competition !== selectedCompetition) {
         return false;
       }
@@ -92,7 +209,7 @@ export default function StatsView({
       }
       return true;
     });
-  }, [matches, selectedCompetition, selectedTournament]);
+  }, [activePoolMatches, selectedCompetition, selectedTournament]);
 
   const sortedSelectorMatches = useMemo(() => {
     return [...competitionFilteredMatches].sort((a, b) => {
@@ -171,7 +288,7 @@ export default function StatsView({
     let cleanSheets = 0;
 
     const playerAgg = {};
-    squad.forEach((p) => {
+    activePoolSquad.forEach((p) => {
       playerAgg[p.id] = {
         id: p.id,
         name: p.name,
@@ -203,7 +320,7 @@ export default function StatsView({
       if (m.stats) {
         Object.keys(m.stats).forEach((pid) => {
           if (!playerAgg[pid]) {
-            const pInfo = squad.find((s) => s.id === pid);
+            const pInfo = activePoolSquad.find((s) => s.id === pid);
             playerAgg[pid] = {
               id: pid,
               name: pInfo ? pInfo.name : 'Unknown Player',
@@ -325,13 +442,13 @@ export default function StatsView({
       fullCleanSheets,
       fullInvolvements
     };
-  }, [filteredMatches, squad, perfWeights]);
+  }, [filteredMatches, activePoolSquad, perfWeights]);
 
   const { topCombinations, fullCombinations } = useMemo(() => {
     const combos = {};
     const filteredMatchIds = new Set(filteredMatches.map((m) => m.id));
 
-    goalEvents
+    activePoolGoalEvents
       .filter((e) => filteredMatchIds.has(e.match_id))
       .forEach((e) => {
         if (!e.scorer_id || !e.assister_id) return;
@@ -345,8 +462,8 @@ export default function StatsView({
     const full = Object.values(combos)
       .sort((a, b) => b.count - a.count)
       .map((c) => {
-        const scorer = squad.find((p) => p.id === c.scorer_id);
-        const assister = squad.find((p) => p.id === c.assister_id);
+        const scorer = activePoolSquad.find((p) => p.id === c.scorer_id);
+        const assister = activePoolSquad.find((p) => p.id === c.assister_id);
         return {
           scorerName: scorer ? scorer.name : 'Unknown',
           assisterName: assister ? assister.name : 'Unknown',
@@ -355,7 +472,7 @@ export default function StatsView({
       });
 
     return { fullCombinations: full, topCombinations: full.slice(0, 5) };
-  }, [goalEvents, filteredMatches, squad]);
+  }, [activePoolGoalEvents, filteredMatches, activePoolSquad]);
 
   // Sort player list dynamically based on sortField, sortDirection, and tableMode
   const sortedPlayers = useMemo(() => {
@@ -495,14 +612,14 @@ export default function StatsView({
 
     const hatTrickPlayers = Object.entries(hatTricksMap)
       .map(([pid, count]) => {
-        const p = squad.find((s) => s.id === pid);
+        const p = activePoolSquad.find((s) => s.id === pid);
         return { id: pid, name: p ? p.name : 'Unknown', count };
       })
       .sort((a, b) => b.count - a.count);
 
     const bracePlayers = Object.entries(bracesMap)
       .map(([pid, count]) => {
-        const p = squad.find((s) => s.id === pid);
+        const p = activePoolSquad.find((s) => s.id === pid);
         return { id: pid, name: p ? p.name : 'Unknown', count };
       })
       .sort((a, b) => b.count - a.count);
@@ -511,7 +628,7 @@ export default function StatsView({
     const totalBraces = Object.values(bracesMap).reduce((acc, c) => acc + c, 0);
 
     const recordPerformances = singleGamePerformances.map((perf) => {
-      const p = squad.find((s) => s.id === perf.playerId);
+      const p = activePoolSquad.find((s) => s.id === perf.playerId);
       return {
         playerName: p ? p.name : 'Unknown',
         opponent: perf.opponent,
@@ -527,11 +644,11 @@ export default function StatsView({
       maxSingleGameGoals,
       recordPerformances
     };
-  }, [filteredMatches, squad]);
+  }, [filteredMatches, activePoolSquad]);
 
   const goalDynamics = useMemo(() => {
     const matchIds = new Set(filteredMatches.map((m) => m.id));
-    const relevantEvents = goalEvents.filter((e) => matchIds.has(e.match_id));
+    const relevantEvents = activePoolGoalEvents.filter((e) => matchIds.has(e.match_id));
 
     const eventsByMatch = {};
     relevantEvents.forEach((e) => {
@@ -600,7 +717,7 @@ export default function StatsView({
 
     const topIcebreakers = Object.entries(openingScorers)
       .map(([pid, count]) => {
-        const p = squad.find((s) => s.id === pid);
+        const p = activePoolSquad.find((s) => s.id === pid);
         return { id: pid, name: p ? p.name : 'Unknown', count };
       })
       .sort((a, b) => b.count - a.count);
@@ -609,7 +726,7 @@ export default function StatsView({
 
     const topSoloScorers = Object.entries(soloScorers)
       .map(([pid, count]) => {
-        const p = squad.find((s) => s.id === pid);
+        const p = activePoolSquad.find((s) => s.id === pid);
         return { id: pid, name: p ? p.name : 'Unknown', count };
       })
       .sort((a, b) => b.count - a.count);
@@ -618,14 +735,14 @@ export default function StatsView({
 
     const topDistributors = Object.entries(distributorSets)
       .map(([pid, set]) => {
-        const p = squad.find((s) => s.id === pid);
+        const p = activePoolSquad.find((s) => s.id === pid);
         return { id: pid, name: p ? p.name : 'Unknown', count: set.size };
       })
       .sort((a, b) => b.count - a.count);
     const topDistCount = topDistributors.length > 0 ? topDistributors[0].count : 0;
     const distributorLeaders = topDistributors.filter((p) => p.count === topDistCount);
 
-    // Efficiency / Consistency leader ("Mr. Reliable")
+    // Efficiency / Consistency leader ("Ever-Reliable")
     // Include all players who share the top consistency rate!
     const minApps = Math.min(2, Math.max(1, filteredMatches.length));
     const eligibleReliable = statsSummary.playerList
@@ -693,7 +810,7 @@ export default function StatsView({
       finisherLeaders,
       impactLeaders
     };
-  }, [filteredMatches, goalEvents, squad, statsSummary.playerList, minFinisherAttempts]);
+  }, [filteredMatches, activePoolGoalEvents, activePoolSquad, statsSummary.playerList, minFinisherAttempts]);
 
   // ==========================================
   // Recent Form Calculation
@@ -778,7 +895,7 @@ export default function StatsView({
     if (formMatches.length === 0) return [];
 
     const playerAgg = {};
-    squad.forEach((p) => {
+    activePoolSquad.forEach((p) => {
       playerAgg[p.id] = {
         id: p.id,
         name: p.name,
@@ -868,7 +985,7 @@ export default function StatsView({
       ...p,
       ga: p.goals + p.assists
     }));
-  }, [formMatches, squad]);
+  }, [formMatches, activePoolSquad]);
 
   const maxRecentGA = useMemo(() => {
     if (playerFormData.length === 0) return 0;
@@ -958,30 +1075,41 @@ export default function StatsView({
         allTeams={allTeams}
         allClubs={allClubs}
         currentUserProfile={currentUserProfile}
-        onSelectTeam={onSelectTeam}
+        onSelectTeam={(t) => {
+          setSeasonScope('CURRENT');
+          setSelectedMatchIds(null);
+          if (onSelectTeam) onSelectTeam(t);
+        }}
         onAddNewTeam={onAddNewTeam}
+        seasonScope={seasonScope}
+        onSelectSeasonScope={(scope) => {
+          setSeasonScope(scope);
+          setSelectedMatchIds(null);
+        }}
       />
 
       <div className="view-container">
-        {/* Competition Filter Bar */}
-        {availableCompetitions.length > 0 && (
+        {/* Competition & Season Scope Filter Bar */}
+        {(availableCompetitions.length > 0 || (allTeams && allTeams.length > 1)) && (
           <div className="competition-filter-bar" style={{ alignItems: 'center' }}>
             <button
               className={`btn-comp-filter ${selectedCompetition === 'ALL' ? 'active' : ''}`}
               onClick={() => {
+                setUserChoseCompetition(true);
                 setSelectedCompetition('ALL');
                 setSelectedTournament('ALL');
               }}
             >
-              All ({matches.length})
+              All Competitions ({activePoolMatches.length})
             </button>
             {availableCompetitions.map((comp) => {
-              const count = matches.filter((m) => m.competition === comp).length;
+              const count = activePoolMatches.filter((m) => m.competition === comp).length;
               return (
                 <button
                   key={comp}
                   className={`btn-comp-filter ${selectedCompetition === comp ? 'active' : ''}`}
                   onClick={() => {
+                    setUserChoseCompetition(true);
                     setSelectedCompetition(comp);
                     setSelectedTournament('ALL');
                   }}
@@ -991,7 +1119,22 @@ export default function StatsView({
               );
             })}
 
-            {matches.length > 0 && (
+            {allTeams && allTeams.length > 1 && (
+              <button
+                type="button"
+                className={`btn-comp-filter ${seasonScope === 'ALL_TIME' ? 'active' : ''}`}
+                onClick={() => {
+                  const nextScope = seasonScope === 'ALL_TIME' ? 'CURRENT' : 'ALL_TIME';
+                  setSeasonScope(nextScope);
+                  setSelectedMatchIds(null);
+                }}
+                title={seasonScope === 'ALL_TIME' ? 'Switch back to current season only' : 'View combined stats across all seasons'}
+              >
+                All Time ({allSeasonsMatches.length})
+              </button>
+            )}
+
+            {activePoolMatches.length > 0 && (
               <button
                 type="button"
                 className={`btn-comp-filter btn-match-selector-toggle ${showMatchSelector || isCustomMatchSelection ? 'active' : ''}`}
@@ -1102,7 +1245,7 @@ export default function StatsView({
                           <input
                             type="checkbox"
                             checked={allSelected}
-                            onChange={() => {}}
+                            onChange={() => { }}
                             style={{ accentColor: 'var(--color-primary)', cursor: 'pointer', margin: 0 }}
                           />
                           <span>{tName}</span>
@@ -1664,9 +1807,9 @@ export default function StatsView({
                   )}
                 </div>
 
-                {/* Icebreaker King */}
+                {/* Icebreaker */}
                 <div className="dynamics-stat-box" title="Player who has scored the first goal of a match the most times">
-                  <div className="dynamics-stat-label">The "Icebreaker" King</div>
+                  <div className="dynamics-stat-label">The &quot;Icebreaker&quot;</div>
                   {goalDynamics.icebreakerLeaders.length > 0 ? (
                     <>
                       <div className="dynamics-stat-value" style={{ color: 'var(--color-secondary-dark)' }}>
@@ -1715,10 +1858,10 @@ export default function StatsView({
                   )}
                 </div>
 
-                {/* Mr. Reliable (Efficiency Leader) */}
+                {/* Ever-Reliable (Efficiency Leader) */}
                 {showEfficiencyRating && (
                   <div className="dynamics-stat-box" title="Player with the highest percentage of matches where they contributed at least 1 goal or assist">
-                    <div className="dynamics-stat-label">"Mr. Reliable" (Efficiency)</div>
+                    <div className="dynamics-stat-label">&quot;Ever-Reliable&quot; (Efficiency)</div>
                     {goalDynamics.reliableLeaders.length > 0 ? (
                       <>
                         <div className="dynamics-stat-value" style={{ color: 'var(--color-stat-involvements)' }}>

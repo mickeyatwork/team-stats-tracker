@@ -730,7 +730,7 @@ export default function SettingsView({
                   className="btn btn-secondary"
                   style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
                 >
-                  <Plus size={14} /> Add Team
+                  <Plus size={14} /> Add Team / Season
                 </button>
               </div>
 
@@ -923,7 +923,7 @@ export default function SettingsView({
                 <div style={{ paddingRight: '1rem' }}>
                   <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Player Efficiency Rating (Eff %)</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                    Display match involvement consistency % in the Squad Breakdown and the Mr. Reliable honour
+                    Display match involvement consistency % in the Squad Breakdown and the Ever-Reliable honour
                   </div>
                 </div>
                 <button

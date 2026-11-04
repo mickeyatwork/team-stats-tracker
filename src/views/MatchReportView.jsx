@@ -2,7 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2, Crosshair, ShieldCheck, Star } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
-import { computeTimelineWithScores, reorderTimelineEvents, generateMissingTimelineEvents } from '../utils/timelineUtils';
+import {
+  computeTimelineWithScores,
+  reorderTimelineEvents,
+  generateMissingTimelineEvents,
+  resolveMatchTimelineEvents,
+  getLocalTimelineEvents,
+  saveLocalTimelineEvents
+} from '../utils/timelineUtils';
 import { parseTournament } from '../utils/tournamentUtils';
 import { FEATURE_KEYS, isFeatureEnabled, getPerformanceWeights } from '../utils/featureFlags';
 import { getSavedMatchRoles } from '../utils/userPreferences';
@@ -21,7 +28,14 @@ export default function MatchReportView({
   setReturnToTournament,
   setActiveTournamentName
 }) {
-  const [goalEvents, setGoalEvents] = useState([]);
+  const [goalEvents, setGoalEvents] = useState(() => {
+    if (!activeMatch?.id) return [];
+    const fromProps = Array.isArray(allGoalEvents)
+      ? allGoalEvents.filter((e) => String(e.match_id) === String(activeMatch.id))
+      : [];
+    if (fromProps.length > 0) return fromProps;
+    return getLocalTimelineEvents(activeMatch.id);
+  });
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [autoPopulating, setAutoPopulating] = useState(false);
   const reorderSaveTimerRef = useRef(null);
@@ -49,12 +63,14 @@ export default function MatchReportView({
     if (!activeMatch) return;
     const fetchGoalEvents = async () => {
       setLoadingEvents(true);
-      const { data } = await supabase
-        .from('goal_events')
-        .select('*')
-        .eq('match_id', activeMatch.id)
-        .order('created_at', { ascending: true });
-      setGoalEvents(data || []);
+      const resolved = await resolveMatchTimelineEvents(supabase, activeMatch, [], allGoalEvents || []);
+      setGoalEvents(resolved);
+      if (setAllGoalEvents && activeMatch?.id) {
+        setAllGoalEvents((prev) => {
+          const others = (prev || []).filter((e) => String(e.match_id) !== String(activeMatch.id));
+          return [...others, ...resolved];
+        });
+      }
       setLoadingEvents(false);
     };
     fetchGoalEvents();
@@ -150,6 +166,7 @@ export default function MatchReportView({
     setGoalEvents((prev) => {
       if (toIndex < 0 || toIndex >= prev.length) return prev;
       const reordered = reorderTimelineEvents(prev, fromIndex, toIndex, activeMatch.date);
+      saveLocalTimelineEvents(activeMatch.id, reordered);
       if (setAllGoalEvents) {
         setAllGoalEvents((allPrev) => {
           const others = allPrev.filter((e) => e.match_id !== activeMatch.id);
@@ -163,7 +180,6 @@ export default function MatchReportView({
 
   // Auto-populate missing timeline events
   const handleAutoPopulateTimeline = async () => {
-    if (isFinished) return;
     setAutoPopulating(true);
     try {
       const missingEvents = generateMissingTimelineEvents(activeMatch, playersInMatch, goalEvents);
@@ -176,17 +192,21 @@ export default function MatchReportView({
         .insert(missingEvents)
         .select();
 
-      if (error) {
-        console.error('Error auto-populating timeline:', error);
-      } else if (data) {
-        const combined = [...goalEvents, ...data].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        setGoalEvents(combined);
-        if (setAllGoalEvents) {
-          setAllGoalEvents((prev) => {
-            const others = prev.filter((e) => e.match_id !== activeMatch.id);
-            return [...others, ...combined];
-          });
-        }
+      const appended = (!error && data && data.length > 0)
+        ? data
+        : missingEvents.map((evt, idx) => ({
+            ...evt,
+            id: `synthetic-${activeMatch.id}-${goalEvents.length + idx + 1}`
+          }));
+
+      const combined = [...goalEvents, ...appended].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      setGoalEvents(combined);
+      saveLocalTimelineEvents(activeMatch.id, combined);
+      if (setAllGoalEvents) {
+        setAllGoalEvents((prev) => {
+          const others = prev.filter((e) => e.match_id !== activeMatch.id);
+          return [...others, ...combined];
+        });
       }
     } catch (err) {
       console.error('Failed to auto-populate timeline:', err);
