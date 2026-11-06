@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { USER_STATUS } from '../utils/authRoles';
 
 export default function AuthView() {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
-  const [isLogin, setIsLogin] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [authSuccess, setAuthSuccess] = useState(null);
@@ -20,112 +19,61 @@ export default function AuthView() {
     const emailClean = authEmail.trim().toLowerCase();
 
     try {
-      if (isLogin) {
-        // First try standard login
-        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
-          email: emailClean,
-          password: authPassword,
-        });
+      // Standard login
+      const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+        email: emailClean,
+        password: authPassword,
+      });
 
-        if (loginError) {
-          // Check if user was pre-created with a temporary password but hasn't activated auth yet
-          const { data: profile } = await supabase
-            .from('user_profiles')
-            .select('*')
-            .eq('email', emailClean)
-            .maybeSingle();
-
-          if (profile && profile.temp_password && profile.temp_password === authPassword) {
-            // First-time activation with temporary password
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-              email: emailClean,
-              password: authPassword,
-            });
-
-            if (signUpError) {
-              throw new Error(`Activation error: ${signUpError.message}`);
-            }
-
-            if (signUpData?.user) {
-              await supabase
-                .from('user_profiles')
-                .update({
-                  auth_user_id: signUpData.user.id,
-                  status: USER_STATUS.ACTIVE,
-                  temp_password: null
-                })
-                .eq('id', profile.id);
-
-              setAuthSuccess('Account activated successfully! Signing in...');
-              return;
-            }
-          }
-
-          throw loginError;
-        }
-
-        // Check if user profile is deactivated
-        if (loginData?.user) {
-          const { data: profile } = await supabase
-            .from('user_profiles')
-            .select('status')
-            .eq('email', emailClean)
-            .maybeSingle();
-
-          if (profile && profile.status === USER_STATUS.DEACTIVATED) {
-            await supabase.auth.signOut();
-            throw new Error('Your account has been deactivated. Please contact your club administrator.');
-          }
-        }
-      } else {
-        // SIGN UP FLOW: Enforce invite-only verification
-        // Check if this email is pre-registered in user_profiles
-        const { data: existingProfiles } = await supabase
+      if (loginError) {
+        // Check if user was pre-created with a temporary password but hasn't activated auth yet
+        const { data: profile } = await supabase
           .from('user_profiles')
-          .select('id, email, status')
-          .limit(1);
+          .select('*')
+          .eq('email', emailClean)
+          .maybeSingle();
 
-        // If there are existing profiles, whitelist enforcement is active
-        if (existingProfiles && existingProfiles.length > 0) {
-          const { data: invitedProfile } = await supabase
-            .from('user_profiles')
-            .select('*')
-            .eq('email', emailClean)
-            .maybeSingle();
+        if (profile && profile.temp_password && profile.temp_password === authPassword) {
+          // First-time activation with temporary password
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: emailClean,
+            password: authPassword,
+          });
 
-          if (!invitedProfile) {
-            throw new Error(
-              'Registration is invite-only. Please contact your club or team administrator to receive an invite.'
-            );
+          if (signUpError) {
+            throw new Error(`Activation error: ${signUpError.message}`);
           }
 
-          if (invitedProfile.status === USER_STATUS.DEACTIVATED) {
-            throw new Error('This account has been deactivated. Please contact your club administrator.');
+          if (signUpData?.user) {
+            await supabase
+              .from('user_profiles')
+              .update({
+                auth_user_id: signUpData.user.id,
+                status: USER_STATUS.ACTIVE,
+                temp_password: null
+              })
+              .eq('id', profile.id);
+
+            setAuthSuccess('Account activated successfully! Signing in...');
+            return;
           }
         }
 
-        // Proceed with signup
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email: emailClean,
-          password: authPassword,
-        });
+        throw loginError;
+      }
 
-        if (signUpError) throw signUpError;
+      // Check if user profile is deactivated
+      if (loginData?.user) {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('status')
+          .eq('email', emailClean)
+          .maybeSingle();
 
-        // Link auth user ID to user profile
-        if (signUpData?.user) {
-          await supabase
-            .from('user_profiles')
-            .update({
-              auth_user_id: signUpData.user.id,
-              status: USER_STATUS.ACTIVE,
-              temp_password: null
-            })
-            .eq('email', emailClean);
+        if (profile && profile.status === USER_STATUS.DEACTIVATED) {
+          await supabase.auth.signOut();
+          throw new Error('Your account has been deactivated. Please contact your club administrator.');
         }
-
-        setAuthSuccess('Signup successful! You can now log in.');
-        setIsLogin(true);
       }
     } catch (error) {
       setAuthError(error.message);
@@ -138,36 +86,13 @@ export default function AuthView() {
     <div className="app-container" style={{ justifyContent: 'center' }}>
       <div className="view-container">
         <div className="card" style={{ padding: '2rem' }}>
-          <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-            <h1 className="title-lg text-gradient" style={{ margin: 0 }}>
-              Youth Football Manager
+          <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
+            <h1 className="title-lg text-gradient" style={{ margin: 0, fontSize: '1.65rem' }}>
+              Team Stats Tracker
             </h1>
             <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
-              Match Tracker, Stats &amp; Squad Management
+              Matchday Tracking, Squad Analytics &amp; Management
             </p>
-          </div>
-
-          <div className="tab-switch">
-            <button
-              onClick={() => {
-                setIsLogin(true);
-                setAuthError(null);
-                setAuthSuccess(null);
-              }}
-              className={`tab-switch-btn ${isLogin ? 'active' : ''}`}
-            >
-              Login
-            </button>
-            <button
-              onClick={() => {
-                setIsLogin(false);
-                setAuthError(null);
-                setAuthSuccess(null);
-              }}
-              className={`tab-switch-btn ${!isLogin ? 'active' : ''}`}
-            >
-              Sign Up (Invite Only)
-            </button>
           </div>
 
           <form onSubmit={handleAuth}>
@@ -183,7 +108,7 @@ export default function AuthView() {
               />
             </div>
             <div className="input-group">
-              <label className="label">{isLogin ? 'Password / Temporary Password' : 'Choose Password'}</label>
+              <label className="label">Password / Temporary Password</label>
               <input
                 type="password"
                 required
@@ -208,15 +133,22 @@ export default function AuthView() {
               </div>
             )}
 
-            <button type="submit" disabled={authLoading} className="btn btn-primary mt-4">
-              {authLoading ? 'Processing...' : isLogin ? 'Login' : 'Create Account'}
+            <button type="submit" disabled={authLoading} className="btn btn-primary mt-4" style={{ width: '100%' }}>
+              {authLoading ? 'Signing In...' : 'Sign In'}
             </button>
 
-            {!isLogin && (
-              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', textAlign: 'center', marginTop: '1rem' }}>
-                Account registration is restricted to invited coaches and staff.
+            <div
+              style={{
+                marginTop: '1.5rem',
+                paddingTop: '1.25rem',
+                borderTop: '1px solid var(--color-border-light)',
+                textAlign: 'center'
+              }}
+            >
+              <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.45 }}>
+                Account registration is by invitation or request only. If you need access, please contact your club administrator.
               </p>
-            )}
+            </div>
           </form>
         </div>
       </div>
