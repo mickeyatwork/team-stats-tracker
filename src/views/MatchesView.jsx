@@ -1,18 +1,25 @@
 import { useState, useMemo } from 'react';
-import { Plus, Play, Trophy, ListOrdered, Edit2, Trash2, X, Check, ChevronRight, Eye } from 'lucide-react';
+import { Plus, Play, Trophy, ListOrdered, Edit2, Trash2, X, Check, ChevronRight, Eye, Calendar, Upload, Link2, RefreshCw } from 'lucide-react';
 import TopNav from '../components/TopNav';
+import FixtureImportModal from '../components/FixtureImportModal';
+import ConfirmDialog from '../components/ConfirmDialog';
+import DatePicker from '../components/DatePicker';
 import { supabase } from '../supabaseClient';
 import { groupMatchesByTournament, setTournamentFinishedStatus, saveTournament, removeSavedTournament } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
 import { getDefaultSquadSelection, isPlayerDefaultOff } from '../utils/playerPreferences';
 import { queueOfflineMatchSnapshot, isOfflineId, markServerUnreachable } from '../utils/offlineSync';
+import { getFixtureCountdownBadge, findMatchingTrackedMatch } from '../utils/fixtureUtils';
+import { computeSeasonTimeframeFromMatches } from '../utils/seasonUtils';
 
 export default function MatchesView({
   matches,
   setMatches,
   squad,
   teamInfo,
+  setTeamInfo,
   allTeams,
+  setAllTeams,
   allClubs = [],
   currentUserProfile,
   onSelectTeam,
@@ -22,7 +29,7 @@ export default function MatchesView({
   session,
   onOpenTournament
 }) {
-  const [activeTab, setActiveTab] = useState('matches'); // 'matches' | 'tournaments'
+  const [activeTab, setActiveTab] = useState('matches'); // 'matches' | 'fixtures' | 'tournaments'
 
   // Regular match creation state
   const [showNewMatchCard, setShowNewMatchCard] = useState(false);
@@ -32,6 +39,14 @@ export default function MatchesView({
   const [newMatchDate, setNewMatchDate] = useState(new Date().toISOString().split('T')[0]);
   const [newMatchHideScore, setNewMatchHideScore] = useState(false);
   const [newMatchSquadSelection, setNewMatchSquadSelection] = useState([]);
+  const [linkedFixtureId, setLinkedFixtureId] = useState(null);
+
+  // Fixture modal & dialog state
+  const [showFixtureImportModal, setShowFixtureImportModal] = useState(false);
+  const [fixtureImportMode, setFixtureImportMode] = useState('bulk');
+  const [editingFixture, setEditingFixture] = useState(null);
+  const [syncingTimeframe, setSyncingTimeframe] = useState(false);
+  const [dialogConfig, setDialogConfig] = useState(null);
 
   // New Tournament creation modal state
   const [showNewTournamentModal, setShowNewTournamentModal] = useState(false);
@@ -50,16 +65,172 @@ export default function MatchesView({
     return groupMatchesByTournament(matches, teamInfo?.id);
   }, [matches, tournamentsVersion, teamInfo?.id]);
 
-  // Regular (Non-tournament) matches
+  // Regular (Non-tournament, non-scheduled) matches
   const regularMatches = useMemo(() => {
-    return matches.filter((m) => m.competition !== 'Tournament');
+    return matches.filter((m) => m.competition !== 'Tournament' && m.status !== 'scheduled');
+  }, [matches]);
+
+  // Scheduled upcoming fixtures sorted chronologically
+  const scheduledFixtures = useMemo(() => {
+    return matches
+      .filter((m) => m.status === 'scheduled')
+      .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+  }, [matches]);
+
+  // Completed regular matches for Previous Results section
+  const completedResults = useMemo(() => {
+    return matches
+      .filter((m) => m.status === 'finished' && m.competition !== 'Tournament')
+      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
   }, [matches]);
 
   // Squad selection default select all active players when card opens
   const handleOpenNewMatch = () => {
+    setLinkedFixtureId(null);
     setNewMatchSquadSelection(getDefaultSquadSelection(squad));
     setNewMatchVariant(getDefaultMatchVariant());
     setShowNewMatchCard(true);
+  };
+
+  const handleSelectFixtureForNewMatch = (fixtureId) => {
+    if (!fixtureId) {
+      setLinkedFixtureId(null);
+      return;
+    }
+    const fixture = scheduledFixtures.find((f) => String(f.id) === String(fixtureId));
+    if (!fixture) return;
+    setLinkedFixtureId(fixture.id);
+    setNewMatchOpponent(fixture.opponent || '');
+    if (fixture.date) {
+      const d = new Date(fixture.date);
+      if (!Number.isNaN(d.getTime())) {
+        setNewMatchDate(d.toISOString().split('T')[0]);
+      }
+    }
+    setNewMatchCompType(fixture.competition || 'League');
+    setNewMatchVariant(fixture.match_variant || getDefaultMatchVariant());
+    setNewMatchHideScore(Boolean(fixture.hide_score));
+  };
+
+  const handleStartTrackingFixture = (fixture) => {
+    setNewMatchSquadSelection(getDefaultSquadSelection(squad));
+    handleSelectFixtureForNewMatch(fixture.id);
+    setActiveTab('matches');
+    setShowNewMatchCard(true);
+  };
+
+  const handleSyncSeasonTimeframe = async (timeframeOverride = null) => {
+    if (!teamInfo?.id) return;
+    const nextTimeframe = timeframeOverride || computeSeasonTimeframeFromMatches(matches);
+    if (!nextTimeframe) {
+      setDialogConfig({
+        isOpen: true,
+        type: 'info',
+        isAlert: true,
+        title: 'No Dated Matches Found',
+        message: 'Add or import at least one dated fixture or match before syncing the season timeframe.',
+        confirmText: 'OK',
+        onConfirm: () => setDialogConfig(null),
+        onCancel: () => setDialogConfig(null)
+      });
+      return;
+    }
+
+    setSyncingTimeframe(true);
+    try {
+      const nextSettings = { ...teamInfo.settings, timeframe: nextTimeframe };
+      try {
+        localStorage.setItem(`team_timeframe_${teamInfo.id}`, nextTimeframe);
+      } catch {
+        // ignore storage quota errors
+      }
+
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      if (!isOffline) {
+        const { error } = await supabase
+          .from('team')
+          .update({ settings: nextSettings })
+          .eq('id', teamInfo.id);
+        if (error) {
+          console.warn('Could not persist synced timeframe to team.settings:', error);
+        }
+      }
+
+      const updatedTeam = { ...teamInfo, settings: nextSettings, timeframe: nextTimeframe };
+      if (setTeamInfo) setTeamInfo(updatedTeam);
+      if (setAllTeams) {
+        setAllTeams((prev) => prev.map((t) => (t.id === teamInfo.id ? { ...t, settings: nextSettings, timeframe: nextTimeframe } : t)));
+      }
+
+      if (!timeframeOverride) {
+        setDialogConfig({
+          isOpen: true,
+          type: 'info',
+          isAlert: true,
+          title: 'Season Timeframe Synced',
+          message: `Season timeframe updated to "${nextTimeframe}".`,
+          confirmText: 'OK',
+          onConfirm: () => setDialogConfig(null),
+          onCancel: () => setDialogConfig(null)
+        });
+      }
+    } finally {
+      setSyncingTimeframe(false);
+    }
+  };
+
+  const handleLinkExistingMatch = (fixture, trackedMatch) => {
+    const fixtureDate = fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB') : 'TBD';
+    const trackedDate = trackedMatch.date ? new Date(trackedMatch.date).toLocaleDateString('en-GB') : 'TBD';
+    setDialogConfig({
+      isOpen: true,
+      type: 'warning',
+      isAlert: false,
+      title: 'Link Fixture to Existing Match',
+      message: `Link scheduled fixture vs ${fixture.opponent} (${fixtureDate}) with tracked match vs ${trackedMatch.opponent} (${trackedDate})? The scheduled placeholder will be merged into the tracked match.`,
+      confirmText: 'Link & Merge',
+      cancelText: 'Cancel',
+      onCancel: () => setDialogConfig(null),
+      onConfirm: async () => {
+        setDialogConfig(null);
+        setMatches((prev) => prev.filter((m) => m.id !== fixture.id));
+        if (isOfflineId(fixture.id) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+          queueOfflineMatchSnapshot(fixture, { deleted: true });
+        } else {
+          const { error } = await supabase.from('matches').delete().eq('id', fixture.id);
+          if (error) {
+            markServerUnreachable(true);
+            queueOfflineMatchSnapshot(fixture, { deleted: true });
+          }
+        }
+      }
+    });
+  };
+
+  const handleDeleteFixture = (fixture) => {
+    setDialogConfig({
+      isOpen: true,
+      type: 'danger',
+      isAlert: false,
+      title: 'Delete Scheduled Fixture',
+      message: `Remove scheduled fixture vs ${fixture.opponent}?`,
+      confirmText: 'Delete Fixture',
+      cancelText: 'Cancel',
+      onCancel: () => setDialogConfig(null),
+      onConfirm: async () => {
+        setDialogConfig(null);
+        setMatches((prev) => prev.filter((m) => m.id !== fixture.id));
+        if (isOfflineId(fixture.id) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+          queueOfflineMatchSnapshot(fixture, { deleted: true });
+          return;
+        }
+        const { error } = await supabase.from('matches').delete().eq('id', fixture.id);
+        if (error) {
+          markServerUnreachable(true);
+          queueOfflineMatchSnapshot(fixture, { deleted: true });
+        }
+      }
+    });
   };
 
   const toggleSquadSelection = (playerId) => {
@@ -92,33 +263,57 @@ export default function MatchesView({
     };
 
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const isLinked = Boolean(linkedFixtureId);
+    const linkedOffline = isLinked && isOfflineId(linkedFixtureId);
     let data = null;
     let error = null;
 
-    if (!isOffline) {
+    if (!isOffline && !linkedOffline) {
       try {
-        const res = await supabase.from('matches').insert([dbMatch]).select();
-        data = res.data;
-        error = res.error;
+        if (isLinked) {
+          const res = await supabase
+            .from('matches')
+            .update({
+              date: dbMatch.date,
+              opponent: dbMatch.opponent,
+              competition: dbMatch.competition,
+              match_variant: dbMatch.match_variant,
+              hide_score: dbMatch.hide_score,
+              status: 'active'
+            })
+            .eq('id', linkedFixtureId)
+            .select();
+          data = res.data;
+          error = res.error;
+        } else {
+          const res = await supabase.from('matches').insert([dbMatch]).select();
+          data = res.data;
+          error = res.error;
+        }
       } catch (err) {
         error = err;
       }
     }
 
-    if (isOffline || error || !data || !data[0]) {
+    if (isOffline || linkedOffline || error || !data || !data[0]) {
       if (error) {
         console.warn('Server unavailable when creating match — saving offline:', error);
         markServerUnreachable(true);
       }
       const offlineMatch = {
         ...dbMatch,
-        id: `offline-match-${Date.now()}`,
+        id: isLinked ? linkedFixtureId : `offline-match-${Date.now()}`,
         created_at: new Date().toISOString(),
         stats: initialStats
       };
       queueOfflineMatchSnapshot(offlineMatch);
-      setMatches([offlineMatch, ...matches]);
+      if (isLinked) {
+        setMatches(matches.map((m) => (m.id === linkedFixtureId ? offlineMatch : m)));
+      } else {
+        setMatches([offlineMatch, ...matches]);
+      }
 
+      setLinkedFixtureId(null);
       setShowNewMatchCard(false);
       setNewMatchOpponent('');
       setNewMatchHideScore(false);
@@ -160,8 +355,13 @@ export default function MatchesView({
         console.warn('Error inserting match stats — queuing for sync:', statsErr);
         queueOfflineMatchSnapshot(matchWithStats);
       }
-      setMatches([matchWithStats, ...matches]);
+      if (isLinked) {
+        setMatches(matches.map((m) => (m.id === linkedFixtureId ? matchWithStats : m)));
+      } else {
+        setMatches([matchWithStats, ...matches]);
+      }
 
+      setLinkedFixtureId(null);
       setShowNewMatchCard(false);
       setNewMatchOpponent('');
       setNewMatchHideScore(false);
@@ -327,13 +527,19 @@ export default function MatchesView({
       />
 
       <div className="view-container">
-        {/* Segmented Top Toggle: Regular Matches vs Tournaments */}
+        {/* Segmented Top Toggle: Regular Matches vs Fixtures vs Tournaments */}
         <div className="matches-tab-bar">
           <button
             className={`btn-matches-tab ${activeTab === 'matches' ? 'active' : ''}`}
             onClick={() => setActiveTab('matches')}
           >
-            <ListOrdered size={16} /> Regular Matches ({regularMatches.length})
+            <ListOrdered size={16} /> Matches ({regularMatches.length})
+          </button>
+          <button
+            className={`btn-matches-tab ${activeTab === 'fixtures' ? 'active' : ''}`}
+            onClick={() => setActiveTab('fixtures')}
+          >
+            <Calendar size={16} /> Fixtures ({scheduledFixtures.length})
           </button>
           <button
             className={`btn-matches-tab ${activeTab === 'tournaments' ? 'active' : ''}`}
@@ -366,11 +572,65 @@ export default function MatchesView({
                   <h3 className="title-md" style={{ marginBottom: 0 }}>
                     Create Match
                   </h3>
-                  <button onClick={() => setShowNewMatchCard(false)} className="btn-icon">
+                  <button
+                    onClick={() => {
+                      setShowNewMatchCard(false);
+                      setLinkedFixtureId(null);
+                    }}
+                    className="btn-icon"
+                  >
                     <X size={20} />
                   </button>
                 </div>
                 <form onSubmit={createMatch}>
+                  {scheduledFixtures.length > 0 && (
+                    <div
+                      style={{
+                        marginBottom: '1rem',
+                        padding: '0.75rem',
+                        backgroundColor: 'var(--color-bg-body)',
+                        borderRadius: 'var(--radius-lg)',
+                        border: '1px solid var(--color-border)'
+                      }}
+                    >
+                      <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <Calendar size={14} /> Load from Scheduled Fixture (Optional)
+                      </label>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <select
+                          className="input select"
+                          value={linkedFixtureId || ''}
+                          onChange={(e) => handleSelectFixtureForNewMatch(e.target.value)}
+                          style={{ flex: 1 }}
+                        >
+                          <option value="">-- Manual match setup --</option>
+                          {scheduledFixtures.map((f) => {
+                            const dateLabel = f.date ? new Date(f.date).toLocaleDateString('en-GB') : 'TBD';
+                            return (
+                              <option key={f.id} value={f.id}>
+                                vs {f.opponent} ({dateLabel} · {f.competition || 'League'})
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {linkedFixtureId && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ width: 'auto', padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}
+                            onClick={() => setLinkedFixtureId(null)}
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      {linkedFixtureId && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-primary)', marginTop: '0.35rem', fontWeight: 500 }}>
+                          Linked to scheduled fixture — starting this match will transition it to Active.
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="flex-row gap-4 mb-4">
                     <div style={{ flex: 1 }}>
                       <label className="label">Opponent</label>
@@ -385,11 +645,9 @@ export default function MatchesView({
                     </div>
                     <div style={{ flex: 1 }}>
                       <label className="label">Date</label>
-                      <input
-                        type="date"
-                        className="input"
+                      <DatePicker
                         value={newMatchDate}
-                        onChange={(e) => setNewMatchDate(e.target.value)}
+                        onChange={setNewMatchDate}
                         required
                       />
                     </div>
@@ -722,6 +980,216 @@ export default function MatchesView({
               })}
             </div>
           </>
+        ) : activeTab === 'fixtures' ? (
+          /* Fixtures View Tab */
+          <>
+            <div className="flex-between mb-4" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h2 className="title-md" style={{ marginBottom: '0.15rem' }}>
+                  Fixtures
+                </h2>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  {teamInfo?.settings?.timeframe || teamInfo?.timeframe
+                    ? `Season Timeframe: ${teamInfo?.settings?.timeframe || teamInfo?.timeframe}`
+                    : 'No season timeframe set yet'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => handleSyncSeasonTimeframe()}
+                  disabled={syncingTimeframe || matches.length === 0}
+                  className="btn btn-secondary"
+                  style={{ width: 'auto', padding: '0.5rem 0.85rem', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                  title="Calculate season timeframe from scheduled fixtures and played matches"
+                >
+                  <RefreshCw size={15} /> {syncingTimeframe ? 'Syncing...' : 'Sync Timeframe'}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingFixture(null);
+                    setFixtureImportMode('bulk');
+                    setShowFixtureImportModal(true);
+                  }}
+                  className="btn btn-secondary"
+                  style={{ width: 'auto', padding: '0.5rem 0.85rem', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                >
+                  <Upload size={15} /> Import Fixtures
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingFixture(null);
+                    setFixtureImportMode('single');
+                    setShowFixtureImportModal(true);
+                  }}
+                  className="btn btn-primary"
+                  style={{ width: 'auto', padding: '0.5rem 0.9rem', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                >
+                  <Plus size={16} /> Add Fixture
+                </button>
+              </div>
+            </div>
+
+            {/* Upcoming Scheduled Fixtures */}
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.75rem' }}>
+              Upcoming Fixtures ({scheduledFixtures.length})
+            </h3>
+            {scheduledFixtures.length === 0 ? (
+              <div className="card empty-state" style={{ padding: '2rem 1.5rem', textAlign: 'center', marginBottom: '1.5rem' }}>
+                <Calendar size={34} style={{ color: 'var(--color-text-light)', margin: '0 auto 0.65rem' }} />
+                <h4 style={{ fontSize: '0.98rem', fontWeight: 700, marginBottom: '0.35rem' }}>No Upcoming Fixtures</h4>
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', maxWidth: '400px', margin: '0 auto 1rem' }}>
+                  Import your season fixture list from CSV or text, or add fixtures one at a time.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => {
+                      setFixtureImportMode('bulk');
+                      setShowFixtureImportModal(true);
+                    }}
+                    className="btn btn-primary"
+                    style={{ width: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    <Upload size={15} /> Import Fixtures
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFixtureImportMode('single');
+                      setShowFixtureImportModal(true);
+                    }}
+                    className="btn btn-secondary"
+                    style={{ width: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    <Plus size={15} /> Add Single Fixture
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="matches-grid" style={{ marginBottom: '1.75rem' }}>
+                {scheduledFixtures.map((fixture) => {
+                  const countdown = getFixtureCountdownBadge(fixture.date);
+                  const potentialMatch = findMatchingTrackedMatch(fixture, regularMatches);
+                  const countdownColors = {
+                    primary: { bg: 'rgba(22, 163, 74, 0.12)', color: 'var(--color-primary)' },
+                    info: { bg: 'rgba(2, 132, 199, 0.12)', color: '#0284c7' },
+                    warning: { bg: 'rgba(245, 158, 11, 0.12)', color: '#d97706' },
+                    neutral: { bg: 'var(--color-bg-body)', color: 'var(--color-text-muted)' }
+                  };
+                  const badgeStyle = countdown ? countdownColors[countdown.variant] || countdownColors.neutral : null;
+
+                  return (
+                    <div key={fixture.id} className="card match-card" style={{ padding: '1rem 1.15rem' }}>
+                      <div className="flex-between" style={{ alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--color-text-main)' }}>
+                            vs {fixture.opponent}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.15rem' }}>
+                            {fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBD'}
+                            {' · '}
+                            {fixture.competition || 'League'}
+                            {fixture.match_variant ? ` · ${fixture.match_variant}` : ''}
+                          </div>
+                        </div>
+                        {countdown && badgeStyle && (
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              padding: '0.2rem 0.55rem',
+                              borderRadius: '999px',
+                              backgroundColor: badgeStyle.bg,
+                              color: badgeStyle.color,
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {countdown.label}
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                        <button
+                          onClick={() => handleStartTrackingFixture(fixture)}
+                          className="btn btn-primary"
+                          style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                        >
+                          <Play size={13} /> Track Match
+                        </button>
+                        {potentialMatch && (
+                          <button
+                            onClick={() => handleLinkExistingMatch(fixture, potentialMatch.match)}
+                            className="btn btn-secondary"
+                            style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                            title={`Detected ${potentialMatch.reason} match with ${potentialMatch.match.opponent}`}
+                          >
+                            <Link2 size={13} /> Link Tracked Match
+                          </button>
+                        )}
+                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <button
+                            onClick={() => {
+                              setEditingFixture(fixture);
+                              setFixtureImportMode('single');
+                              setShowFixtureImportModal(true);
+                            }}
+                            className="btn-icon"
+                            title="Edit scheduled fixture"
+                          >
+                            <Edit2 size={15} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteFixture(fixture)}
+                            className="btn-icon"
+                            style={{ color: 'var(--color-danger)' }}
+                            title="Delete scheduled fixture"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Previous Fixture Results */}
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.75rem' }}>
+              Previous Results ({completedResults.length})
+            </h3>
+            {completedResults.length === 0 ? (
+              <div className="card" style={{ padding: '1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                Completed matches will appear here automatically.
+              </div>
+            ) : (
+              <div className="matches-grid">
+                {completedResults.map((match) => (
+                  <div
+                    key={match.id}
+                    className="card match-card"
+                    onClick={(e) => viewMatchDetails(match.id, e)}
+                    style={{ cursor: 'pointer', padding: '0.9rem 1.1rem' }}
+                  >
+                    <div className="flex-between">
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>vs {match.opponent}</div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                          {match.date ? new Date(match.date).toLocaleDateString('en-GB') : ''} · {match.competition || 'League'}
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--color-text-main)' }}>
+                        {match.hide_score ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>Score Hidden</span>
+                        ) : (
+                          `${match.team_goals ?? 0} - ${match.opponent_goals ?? 0}`
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         ) : (
           /* Tournaments View Tab */
           <>
@@ -1021,6 +1489,41 @@ export default function MatchesView({
             </div>
           </div>
         </div>
+      )}
+      {/* Fixture Import / Add / Edit Modal */}
+      <FixtureImportModal
+        isOpen={showFixtureImportModal}
+        onClose={() => {
+          setShowFixtureImportModal(false);
+          setEditingFixture(null);
+        }}
+        teamInfo={teamInfo}
+        session={session}
+        existingMatches={matches}
+        initialMode={fixtureImportMode}
+        editingFixture={editingFixture}
+        onFixturesImported={(inserted) => {
+          setMatches((prev) => [...inserted, ...prev]);
+        }}
+        onFixtureUpdated={(updated) => {
+          setMatches((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        }}
+        onSyncTimeframe={(timeframeStr) => handleSyncSeasonTimeframe(timeframeStr)}
+      />
+
+      {/* Reusable In-App Confirm / Alert Dialog */}
+      {dialogConfig && (
+        <ConfirmDialog
+          isOpen={dialogConfig.isOpen}
+          title={dialogConfig.title}
+          message={dialogConfig.message}
+          type={dialogConfig.type}
+          isAlert={dialogConfig.isAlert}
+          confirmText={dialogConfig.confirmText}
+          cancelText={dialogConfig.cancelText}
+          onConfirm={dialogConfig.onConfirm}
+          onCancel={dialogConfig.onCancel}
+        />
       )}
     </div>
   );

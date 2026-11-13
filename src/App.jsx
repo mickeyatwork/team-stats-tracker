@@ -774,7 +774,9 @@ export default function App() {
         setMatches={setMatches}
         squad={squad}
         teamInfo={teamInfo}
+        setTeamInfo={setTeamInfo}
         allTeams={allTeams}
+        setAllTeams={setAllTeams}
         allClubs={allClubs}
         currentUserProfile={currentUserProfile}
         onSelectTeam={handleSelectTeam}

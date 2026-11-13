@@ -40,14 +40,15 @@ export default function StatsView({
   const { activePoolMatches, activePoolSquad, activePoolGoalEvents } = useMemo(() => {
     if (seasonScope !== 'ALL_TIME') {
       return {
-        activePoolMatches: matches,
+        activePoolMatches: matches.filter((m) => m.status !== 'scheduled'),
         activePoolSquad: squad,
         activePoolGoalEvents: goalEvents
       };
     }
 
     const sourceSquad = allSeasonsSquad.length > 0 ? allSeasonsSquad : squad;
-    const sourceMatches = allSeasonsMatches.length > 0 ? allSeasonsMatches : matches;
+    const rawSourceMatches = allSeasonsMatches.length > 0 ? allSeasonsMatches : matches;
+    const sourceMatches = rawSourceMatches.filter((m) => m.status !== 'scheduled');
     const sourceEvents = allSeasonsGoalEvents.length > 0 ? allSeasonsGoalEvents : goalEvents;
 
     // Build canonical player map by normalized name, preferring current season's player record first
