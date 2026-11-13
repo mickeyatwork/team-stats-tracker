@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Trophy, Plus, X, Eye, Play, Edit2, Trash2, CheckCircle, Users } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import ConfirmDialog from '../components/ConfirmDialog';
+import DatePicker from '../components/DatePicker';
 import { supabase } from '../supabaseClient';
 import { parseTournament, encodeTournament, KNOCKOUT_ROUNDS, isTournamentFinished, setTournamentFinishedStatus, saveTournament, getTournamentAvailablePlayers, setTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
@@ -976,11 +977,9 @@ export default function TournamentView({
                 </div>
                 <div style={{ flex: 1 }}>
                   <label className="label">Date</label>
-                  <input
-                    type="date"
-                    className="input"
+                  <DatePicker
                     value={matchDate}
-                    onChange={(e) => setMatchDate(e.target.value)}
+                    onChange={setMatchDate}
                     required
                   />
                 </div>
