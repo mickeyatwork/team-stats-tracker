@@ -265,10 +265,12 @@ export default function App() {
             const settings = t.settings || {};
             const league = (t.league || settings.league || localStorage.getItem(`team_league_${t.id}`) || '').trim();
             const timeframe = (t.timeframe || settings.timeframe || localStorage.getItem(`team_timeframe_${t.id}`) || '').trim();
+            const badge_url = (t.badge_url || settings.badge_url || localStorage.getItem(`team_badge_${t.id}`) || '').trim();
             return {
               ...t,
               league,
               timeframe,
+              badge_url,
               ...getTeamFeatures(t)
             };
           })
@@ -487,11 +489,19 @@ export default function App() {
 
     const cleanLeague = newLeagueName.trim();
     const cleanTimeframe = newTimeframe.trim();
+    const matchingExistingTeam = allTeams.find(
+      (t) =>
+        (t.name || '').trim().toLowerCase() === newTeamName.trim().toLowerCase() &&
+        (t.club_id || null) === (targetClubId || null) &&
+        (t.badge_url || t.settings?.badge_url)
+    );
+    const inheritedBadgeUrl = matchingExistingTeam?.badge_url || matchingExistingTeam?.settings?.badge_url || '';
 
     const newSettings = {
       ...(teamInfo?.settings ? teamInfo.settings : {}),
       ...(cleanLeague ? { league: cleanLeague } : {}),
-      ...(cleanTimeframe ? { timeframe: cleanTimeframe } : {})
+      ...(cleanTimeframe ? { timeframe: cleanTimeframe } : {}),
+      badge_url: inheritedBadgeUrl
     };
 
     const newTeamObj = {
@@ -544,6 +554,7 @@ export default function App() {
         try {
           if (cleanLeague) localStorage.setItem(`team_league_${data.id}`, cleanLeague);
           if (cleanTimeframe) localStorage.setItem(`team_timeframe_${data.id}`, cleanTimeframe);
+          if (inheritedBadgeUrl) localStorage.setItem(`team_badge_${data.id}`, inheritedBadgeUrl);
         } catch {
           // ignore localStorage error
         }
@@ -567,6 +578,7 @@ export default function App() {
           ...data,
           league: cleanLeague || data.league || data.settings?.league || '',
           timeframe: cleanTimeframe || data.timeframe || data.settings?.timeframe || '',
+          badge_url: inheritedBadgeUrl || data.badge_url || data.settings?.badge_url || '',
           ...getTeamFeatures(data)
         };
         setAllTeams([enrichedTeam, ...allTeams]);

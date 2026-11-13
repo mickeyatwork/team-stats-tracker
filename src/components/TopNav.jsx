@@ -1,8 +1,9 @@
-import { Users, Calendar, Settings as SettingsIcon, X, BarChart3, ChevronDown, Plus, Shield, WifiOff, RefreshCw, Check } from 'lucide-react';
+import { Users, Calendar, Settings as SettingsIcon, X, BarChart3, ChevronDown, Plus, WifiOff, RefreshCw, Check } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { hasAdminPrivileges } from '../utils/authRoles';
 import { getOfflineSyncState, subscribeOfflineSync, flushOfflineSyncQueue } from '../utils/offlineSync';
 import { supabase } from '../supabaseClient';
+import TeamBadge from './TeamBadge';
 
 export default function TopNav({
   title,
@@ -74,7 +75,7 @@ export default function TopNav({
                 flexWrap: 'wrap'
               }}
             >
-              <Shield size={12} color="var(--color-primary)" style={{ flexShrink: 0 }} />
+              <TeamBadge url={teamInfo.badge_url || teamInfo.settings?.badge_url} size={14} />
               <span style={{ fontWeight: 600, color: 'var(--color-text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {teamInfo.name}
               </span>
@@ -135,6 +136,9 @@ export default function TopNav({
                       {groupedTeams.map((group, groupIdx) => {
                         const isCurrentTeam = group.seasons.some((s) => s.id === teamInfo?.id);
                         const tClub = allClubs.find((c) => c.id === group.clubId);
+                        const groupBadgeUrl = group.seasons.find((s) => s.badge_url || s.settings?.badge_url)?.badge_url
+                          || group.seasons.find((s) => s.settings?.badge_url)?.settings?.badge_url
+                          || '';
 
                         return (
                           <div key={group.key} className="dropdown-team-group" style={{ marginBottom: '0.4rem' }}>
@@ -155,7 +159,11 @@ export default function TopNav({
                               }}
                             >
                               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <Shield size={12} />
+                                <TeamBadge
+                                  url={groupBadgeUrl}
+                                  size={14}
+                                  color={isCurrentTeam ? 'var(--color-primary)' : 'var(--color-text-muted)'}
+                                />
                                 {group.name}
                               </span>
                               {tClub && (
