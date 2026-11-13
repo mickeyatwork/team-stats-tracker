@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   LogOut,
   User,
@@ -18,13 +18,21 @@ import {
   Trash2,
   X,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Upload
 } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import UserManagementTab from '../components/UserManagementTab';
 import ClubManagementModal from '../components/ClubManagementModal';
 import ConfirmDialog from '../components/ConfirmDialog';
+import TeamBadge from '../components/TeamBadge';
 import { supabase } from '../supabaseClient';
+import {
+  validateBadgeFile,
+  resizeImageToWebp,
+  uploadTeamBadge,
+  deleteTeamBadge
+} from '../utils/imageUtils';
 import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
 import {
   FEATURE_KEYS,
@@ -89,6 +97,11 @@ export default function SettingsView({
   const [performanceWeightsInput, setPerformanceWeightsInput] = useState(() => getPerformanceWeights(teamInfo));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
+
+  // Team Badge / Logo State
+  const [badgeUrlInput, setBadgeUrlInput] = useState(teamInfo?.badge_url || teamInfo?.settings?.badge_url || '');
+  const [badgeUploading, setBadgeUploading] = useState(false);
+  const badgeFileInputRef = useRef(null);
 
   // Season Rename & Delete Modal State
   const [editingSeason, setEditingSeason] = useState(null);
@@ -189,6 +202,7 @@ export default function SettingsView({
       setSeasonNameInput(teamInfo.season || '');
       setLeagueInput(teamInfo.league || teamInfo.settings?.league || '');
       setTimeframeInput(teamInfo.timeframe || teamInfo.settings?.timeframe || '');
+      setBadgeUrlInput(teamInfo.badge_url || teamInfo.settings?.badge_url || '');
       setHidePositionsInput(teamInfo.hide_positions || false);
       setMatchDynamicsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
       setEfficiencyRatingInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
@@ -354,6 +368,103 @@ export default function SettingsView({
     } catch (error) {
       setTeamStatus({ loading: false, success: null, error: error.message });
     }
+  };
+
+  const persistBadgeUrlForTeam = async (newUrl) => {
+    if (!teamInfo?.id) return;
+    const teamNameKey = (teamInfo.name || '').trim().toLowerCase();
+    const clubKey = teamInfo.club_id || null;
+
+    const matchingSeasons = allTeams.filter(
+      (t) => (t.name || '').trim().toLowerCase() === teamNameKey && (t.club_id || null) === clubKey
+    );
+    const targets = matchingSeasons.length > 0 ? matchingSeasons : [teamInfo];
+
+    for (const seasonRow of targets) {
+      const updatedSettings = {
+        ...seasonRow.settings,
+        badge_url: newUrl
+      };
+      const { error } = await supabase
+        .from('team')
+        .update({ settings: updatedSettings })
+        .eq('id', seasonRow.id);
+      if (error && !error.message?.includes('settings') && error.code !== 'PGRST204') {
+        throw error;
+      }
+      try {
+        if (newUrl) {
+          localStorage.setItem(`team_badge_${seasonRow.id}`, newUrl);
+        } else {
+          localStorage.removeItem(`team_badge_${seasonRow.id}`);
+        }
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    const updatedIds = new Set(targets.map((t) => t.id));
+    setAllTeams(
+      allTeams.map((t) =>
+        updatedIds.has(t.id)
+          ? { ...t, badge_url: newUrl, settings: { ...t.settings, badge_url: newUrl } }
+          : t
+      )
+    );
+    setTeamInfo((prev) =>
+      prev && updatedIds.has(prev.id)
+        ? { ...prev, badge_url: newUrl, settings: { ...prev.settings, badge_url: newUrl } }
+        : prev
+    );
+    setBadgeUrlInput(newUrl);
+  };
+
+  const handleBadgeFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (badgeFileInputRef.current) {
+      badgeFileInputRef.current.value = '';
+    }
+    if (!file || !teamInfo?.id) return;
+
+    const validation = validateBadgeFile(file);
+    if (!validation.valid) {
+      showWarningDialog('Invalid Badge Image', validation.error);
+      return;
+    }
+
+    setBadgeUploading(true);
+    try {
+      const webpBlob = await resizeImageToWebp(file, 256);
+      const publicUrl = await uploadTeamBadge(webpBlob, teamInfo.club_id, teamInfo.name);
+      await persistBadgeUrlForTeam(publicUrl);
+      setTeamStatus({ loading: false, success: 'Team badge updated!', error: null });
+    } catch (err) {
+      showWarningDialog('Logo Storage Unavailable', err.message || 'Could not upload team badge.');
+    } finally {
+      setBadgeUploading(false);
+    }
+  };
+
+  const handleRemoveBadge = () => {
+    if (!teamInfo?.id || !badgeUrlInput) return;
+    showConfirmDialog({
+      title: 'Remove Team Badge',
+      message: `Remove the custom badge for ${teamInfo.name}? The app will revert to the default shield icon.`,
+      type: 'danger',
+      confirmText: 'Remove Badge',
+      onConfirm: async () => {
+        setBadgeUploading(true);
+        try {
+          await deleteTeamBadge(teamInfo.club_id, teamInfo.name);
+          await persistBadgeUrlForTeam('');
+          setTeamStatus({ loading: false, success: 'Team badge removed.', error: null });
+        } catch (err) {
+          showWarningDialog('Error Removing Badge', err.message || 'Could not remove team badge.');
+        } finally {
+          setBadgeUploading(false);
+        }
+      }
+    });
   };
 
   const handleCreateNewTeam = async (e) => {
@@ -952,6 +1063,79 @@ export default function SettingsView({
                 {activeClub?.location && ` (${activeClub.location})`}
               </p>
 
+              {/* Team Badge / Logo Upload */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  padding: '0.85rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '1.15rem',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <div
+                  style={{
+                    width: '72px',
+                    height: '72px',
+                    borderRadius: 'var(--radius-lg)',
+                    background: 'var(--color-bg-card)',
+                    border: '1px solid var(--color-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                    padding: '6px'
+                  }}
+                >
+                  <TeamBadge url={badgeUrlInput} size={56} />
+                </div>
+
+                <div style={{ flex: 1, minWidth: '180px' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.2rem' }}>
+                    Team Badge / Logo
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--color-text-muted)', marginBottom: '0.55rem' }}>
+                    PNG, JPG, WebP or SVG — max 2 MB (resized to 256×256 WebP). Applies to all seasons of {teamInfo?.name}.
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <input
+                      ref={badgeFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={handleBadgeFileSelect}
+                      style={{ display: 'none' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => badgeFileInputRef.current?.click()}
+                      disabled={badgeUploading}
+                      className="btn btn-secondary flex-row gap-1"
+                      style={{ width: 'auto', fontSize: '0.78rem', padding: '0.35rem 0.75rem' }}
+                    >
+                      <Upload size={13} />
+                      {badgeUploading ? 'Uploading...' : badgeUrlInput ? 'Replace Logo' : 'Upload Logo'}
+                    </button>
+
+                    {badgeUrlInput && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveBadge}
+                        disabled={badgeUploading}
+                        className="btn btn-secondary flex-row gap-1"
+                        style={{ width: 'auto', fontSize: '0.78rem', padding: '0.35rem 0.75rem', color: 'var(--color-danger)' }}
+                      >
+                        <Trash2 size={13} /> Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <form onSubmit={handleUpdateTeamDetails}>
                 <div className="input-group">
                   <label className="label">Team / Sub-team Name</label>
@@ -1133,6 +1317,9 @@ export default function SettingsView({
                 {groupedTeams.map((group) => {
                   const isCurrentTeam = group.seasons.some((s) => s.id === teamInfo?.id);
                   const tClub = allClubs.find((c) => c.id === group.club_id);
+                  const groupBadgeUrl = group.seasons.find((s) => s.badge_url || s.settings?.badge_url)?.badge_url
+                    || group.seasons.find((s) => s.settings?.badge_url)?.settings?.badge_url
+                    || '';
 
                   return (
                     <div
@@ -1164,15 +1351,18 @@ export default function SettingsView({
                               width: '32px',
                               height: '32px',
                               borderRadius: 'var(--radius-md)',
-                              background: isCurrentTeam ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                              background: groupBadgeUrl ? 'var(--color-bg-card)' : (isCurrentTeam ? 'var(--color-primary)' : 'var(--color-text-muted)'),
+                              border: groupBadgeUrl ? '1px solid var(--color-border)' : 'none',
                               color: 'white',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              flexShrink: 0
+                              flexShrink: 0,
+                              overflow: 'hidden',
+                              padding: groupBadgeUrl ? '2px' : 0
                             }}
                           >
-                            <Shield size={16} />
+                            <TeamBadge url={groupBadgeUrl} size={groupBadgeUrl ? 26 : 16} color="white" />
                           </div>
                           <div>
                             <div style={{ fontWeight: 700, fontSize: '0.95rem', color: isCurrentTeam ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
