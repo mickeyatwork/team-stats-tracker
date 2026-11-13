@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   LogOut,
   User,
@@ -7,17 +7,23 @@ import {
   Shield,
   Plus,
   Check,
+  Edit2,
   Edit3,
   Sliders,
   Palette,
   Calendar,
   Users,
   Building2,
-  ToggleLeft
+  ToggleLeft,
+  Trash2,
+  X,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import UserManagementTab from '../components/UserManagementTab';
 import ClubManagementModal from '../components/ClubManagementModal';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { supabase } from '../supabaseClient';
 import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
 import {
@@ -36,6 +42,10 @@ import {
   canManageFeatureFlags,
   canManageClubs
 } from '../utils/authRoles';
+import {
+  computeSeasonTimeframeFromMatches,
+  getEffectiveTimeframe
+} from '../utils/seasonUtils';
 
 export default function SettingsView({
   session,
@@ -50,7 +60,8 @@ export default function SettingsView({
   onAddNewTeam,
   setCurrentView,
   currentTheme,
-  setCurrentTheme
+  setCurrentTheme,
+  allSeasonsMatches = []
 }) {
   // Update Email Form
   const [newEmail, setNewEmail] = useState('');
@@ -63,6 +74,9 @@ export default function SettingsView({
 
   // Update Active Team Details & Feature Switches
   const [teamNameInput, setTeamNameInput] = useState(teamInfo?.name || '');
+  const [seasonNameInput, setSeasonNameInput] = useState(teamInfo?.season || '');
+  const [leagueInput, setLeagueInput] = useState(teamInfo?.league || teamInfo?.settings?.league || '');
+  const [timeframeInput, setTimeframeInput] = useState(teamInfo?.timeframe || teamInfo?.settings?.timeframe || '');
   const [hidePositionsInput, setHidePositionsInput] = useState(teamInfo?.hide_positions || false);
   const [matchDynamicsInput, setMatchDynamicsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
   const [efficiencyRatingInput, setEfficiencyRatingInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
@@ -75,6 +89,69 @@ export default function SettingsView({
   const [performanceWeightsInput, setPerformanceWeightsInput] = useState(() => getPerformanceWeights(teamInfo));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
+
+  // Season Rename & Delete Modal State
+  const [editingSeason, setEditingSeason] = useState(null);
+  const [editingSeasonName, setEditingSeasonName] = useState('');
+  const [editingLeagueName, setEditingLeagueName] = useState('');
+  const [editingTimeframe, setEditingTimeframe] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [seasonActionStatus, setSeasonActionStatus] = useState(null);
+
+  // In-app Warning & Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState(null);
+
+  const showWarningDialog = (title, message) => {
+    setDialogConfig({
+      isOpen: true,
+      type: 'warning',
+      isAlert: true,
+      title,
+      message,
+      confirmText: 'Understood',
+      onConfirm: () => setDialogConfig(null)
+    });
+  };
+
+  const showConfirmDialog = ({ title, message, type = 'danger', confirmText = 'Confirm', onConfirm }) => {
+    setDialogConfig({
+      isOpen: true,
+      type,
+      isAlert: false,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        setDialogConfig(null);
+        await onConfirm();
+      },
+      onCancel: () => setDialogConfig(null)
+    });
+  };
+
+  // Group teams by name and club
+  const groupedTeams = useMemo(() => {
+    const map = new Map();
+    (allTeams || []).forEach((t) => {
+      const key = `${t.club_id || ''}:::${(t.name || '').trim().toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          name: (t.name || '').trim(),
+          club_id: t.club_id,
+          seasons: []
+        });
+      }
+      map.get(key).seasons.push(t);
+    });
+    return Array.from(map.values());
+  }, [allTeams]);
+
+  const getMatchCountForSeason = (seasonId) => {
+    if (!allSeasonsMatches || allSeasonsMatches.length === 0) return 0;
+    return allSeasonsMatches.filter((m) => m.team_id === seasonId).length;
+  };
 
   // RBAC Privileges
   const isDev = isDevAdmin(currentUserProfile);
@@ -109,6 +186,9 @@ export default function SettingsView({
   useEffect(() => {
     if (teamInfo) {
       setTeamNameInput(teamInfo.name || '');
+      setSeasonNameInput(teamInfo.season || '');
+      setLeagueInput(teamInfo.league || teamInfo.settings?.league || '');
+      setTimeframeInput(teamInfo.timeframe || teamInfo.settings?.timeframe || '');
       setHidePositionsInput(teamInfo.hide_positions || false);
       setMatchDynamicsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
       setEfficiencyRatingInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
@@ -122,10 +202,26 @@ export default function SettingsView({
     }
   }, [teamInfo]);
 
+  // Detected match timeframe for active team
+  const detectedActiveTimeframe = useMemo(() => {
+    if (!teamInfo?.id || !allSeasonsMatches) return '';
+    const seasonMatches = allSeasonsMatches.filter((m) => m.team_id === teamInfo.id);
+    return computeSeasonTimeframeFromMatches(seasonMatches);
+  }, [teamInfo?.id, allSeasonsMatches]);
+
+  // Detected match timeframe for season currently being edited
+  const editingComputedTimeframe = useMemo(() => {
+    if (!editingSeason?.id || !allSeasonsMatches) return '';
+    const seasonMatches = allSeasonsMatches.filter((m) => m.team_id === editingSeason.id);
+    return computeSeasonTimeframeFromMatches(seasonMatches);
+  }, [editingSeason?.id, allSeasonsMatches]);
+
   // Add New Team Form Modal state inside settings
   const [showAddTeamModal, setShowAddTeamModal] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
   const [newSeasonName, setNewSeasonName] = useState('');
+  const [newLeagueName, setNewLeagueName] = useState('');
+  const [newTimeframe, setNewTimeframe] = useState('');
   const [newTeamClubId, setNewTeamClubId] = useState(() => currentUserProfile?.club_id || (allClubs[0]?.id || ''));
   const [addTeamLoading, setAddTeamLoading] = useState(false);
 
@@ -167,8 +263,13 @@ export default function SettingsView({
     if (!teamNameInput || !teamInfo?.id) return;
     setTeamStatus({ loading: true, success: null, error: null });
     try {
+      const cleanLeague = leagueInput.trim();
+      const cleanTimeframe = timeframeInput.trim();
+
       const newSettings = {
         ...teamInfo.settings,
+        league: cleanLeague,
+        timeframe: cleanTimeframe,
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
@@ -180,21 +281,33 @@ export default function SettingsView({
         performance_weights: performanceWeightsInput
       };
 
-      // Try updating with settings JSONB column
+      // Try updating with settings JSONB and optional columns
+      const updatePayload = {
+        name: teamNameInput.trim(),
+        season: seasonNameInput.trim(),
+        league: cleanLeague || null,
+        timeframe: cleanTimeframe || null,
+        hide_positions: hidePositionsInput,
+        settings: newSettings
+      };
+
       let { error } = await supabase
         .from('team')
-        .update({
-          name: teamNameInput,
-          hide_positions: hidePositionsInput,
-          settings: newSettings
-        })
+        .update(updatePayload)
         .eq('id', teamInfo.id);
+
+      // Fallback if league/timeframe column doesn't exist
+      if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
+        const { league: _omitL, timeframe: _omitT, ...fallbackWithoutCols } = updatePayload;
+        const retry = await supabase.from('team').update(fallbackWithoutCols).eq('id', teamInfo.id);
+        error = retry.error;
+      }
 
       // If settings column doesn't exist yet in database, fallback to updating without it
       if (error && (error.message?.includes('settings') || error.code === 'PGRST204')) {
         const retry = await supabase
           .from('team')
-          .update({ name: teamNameInput, hide_positions: hidePositionsInput })
+          .update({ name: teamNameInput.trim(), season: seasonNameInput.trim(), hide_positions: hidePositionsInput })
           .eq('id', teamInfo.id);
         if (retry.error) throw retry.error;
       } else if (error) {
@@ -211,13 +324,18 @@ export default function SettingsView({
       try {
         localStorage.setItem(`team_min_finisher_${teamInfo.id}`, String(minFinisherAttemptsInput));
         localStorage.setItem(`team_perf_weights_${teamInfo.id}`, JSON.stringify(performanceWeightsInput));
+        if (cleanLeague) localStorage.setItem(`team_league_${teamInfo.id}`, cleanLeague);
+        if (cleanTimeframe) localStorage.setItem(`team_timeframe_${teamInfo.id}`, cleanTimeframe);
       } catch {
         // fallback
       }
 
       const updated = {
         ...teamInfo,
-        name: teamNameInput,
+        name: teamNameInput.trim(),
+        season: seasonNameInput.trim(),
+        league: cleanLeague,
+        timeframe: cleanTimeframe,
         hide_positions: hidePositionsInput,
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
@@ -247,23 +365,61 @@ export default function SettingsView({
       ? (newTeamClubId || (allClubs[0]?.id || null))
       : (currentUserProfile?.club_id || (allClubs[0]?.id || null));
 
+    const cleanLeague = newLeagueName.trim();
+    const cleanTimeframe = newTimeframe.trim();
+
+    const newSettings = {
+      ...(teamInfo?.settings ? teamInfo.settings : {}),
+      ...(cleanLeague ? { league: cleanLeague } : {}),
+      ...(cleanTimeframe ? { timeframe: cleanTimeframe } : {})
+    };
+
     const newTeamObj = {
       user_id: session.user.id,
       name: newTeamName.trim(),
       season: newSeasonName.trim(),
+      league: cleanLeague || null,
+      timeframe: cleanTimeframe || null,
       club_id: targetClubId,
-      hide_positions: false
+      hide_positions: false,
+      settings: newSettings
     };
 
-    const { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
+    let { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
+
+    if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
+      const { league: _omitL, timeframe: _omitT, ...fallbackWithoutCols } = newTeamObj;
+      const retry = await supabase.from('team').insert([fallbackWithoutCols]).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    if (error && (error.message?.includes('settings') || error.code === 'PGRST204')) {
+      const { settings: _omitSettings, league: _omitL, timeframe: _omitT, ...fallbackTeamObj } = newTeamObj;
+      const retry = await supabase.from('team').insert([fallbackTeamObj]).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
-      alert(`Error adding team: ${error.message}`);
+      showWarningDialog('Error Adding Team', error.message);
       setAddTeamLoading(false);
       return;
     }
 
     if (data) {
+      try {
+        if (cleanLeague) localStorage.setItem(`team_league_${data.id}`, cleanLeague);
+        if (cleanTimeframe) localStorage.setItem(`team_timeframe_${data.id}`, cleanTimeframe);
+      } catch {}
+
+      const enriched = {
+        ...data,
+        league: cleanLeague || data.league || data.settings?.league || '',
+        timeframe: cleanTimeframe || data.timeframe || data.settings?.timeframe || '',
+        ...getTeamFeatures(data)
+      };
+
       // Also automatically assign creator to this team in user_team_assignments
       if (currentUserProfile?.id) {
         await supabase.from('user_team_assignments').insert([
@@ -271,13 +427,177 @@ export default function SettingsView({
         ]);
       }
 
-      setAllTeams([data, ...allTeams]);
-      setTeamInfo(data);
+      setAllTeams([enriched, ...allTeams]);
+      setTeamInfo(enriched);
       setShowAddTeamModal(false);
       setNewTeamName('');
       setNewSeasonName('');
+      setNewLeagueName('');
+      setNewTimeframe('');
     }
     setAddTeamLoading(false);
+  };
+
+  const handleSaveEditSeason = async (e) => {
+    e.preventDefault();
+    if (!editingSeason?.id || !editingSeasonName.trim()) return;
+    const cleanName = editingSeasonName.trim();
+    const cleanLeague = editingLeagueName.trim();
+    const cleanTimeframe = editingTimeframe.trim();
+    setRenameLoading(true);
+    try {
+      const updatedSettings = {
+        ...editingSeason.settings,
+        league: cleanLeague,
+        timeframe: cleanTimeframe
+      };
+
+      const updatePayload = {
+        season: cleanName,
+        league: cleanLeague || null,
+        timeframe: cleanTimeframe || null,
+        settings: updatedSettings
+      };
+
+      let { error } = await supabase
+        .from('team')
+        .update(updatePayload)
+        .eq('id', editingSeason.id);
+
+      if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
+        const { league: _omitL, timeframe: _omitT, ...fallbackWithoutCols } = updatePayload;
+        const retry = await supabase.from('team').update(fallbackWithoutCols).eq('id', editingSeason.id);
+        error = retry.error;
+      }
+
+      if (error && (error.message?.includes('settings') || error.code === 'PGRST204')) {
+        const retry = await supabase
+          .from('team')
+          .update({ season: cleanName })
+          .eq('id', editingSeason.id);
+        if (retry.error) throw retry.error;
+      } else if (error) {
+        throw error;
+      }
+
+      try {
+        if (cleanLeague) localStorage.setItem(`team_league_${editingSeason.id}`, cleanLeague);
+        if (cleanTimeframe) localStorage.setItem(`team_timeframe_${editingSeason.id}`, cleanTimeframe);
+      } catch {}
+
+      const updatedTeams = allTeams.map((t) =>
+        t.id === editingSeason.id
+          ? {
+              ...t,
+              season: cleanName,
+              league: cleanLeague,
+              timeframe: cleanTimeframe,
+              settings: updatedSettings
+            }
+          : t
+      );
+      setAllTeams(updatedTeams);
+
+      if (teamInfo?.id === editingSeason.id) {
+        const updatedInfo = {
+          ...teamInfo,
+          season: cleanName,
+          league: cleanLeague,
+          timeframe: cleanTimeframe,
+          settings: updatedSettings
+        };
+        setTeamInfo(updatedInfo);
+        setSeasonNameInput(cleanName);
+        setLeagueInput(cleanLeague);
+        setTimeframeInput(cleanTimeframe);
+      }
+
+      setEditingSeason(null);
+      setEditingSeasonName('');
+      setEditingLeagueName('');
+      setEditingTimeframe('');
+      setSeasonActionStatus({ success: `Season details for "${cleanName}" updated successfully!`, error: null });
+      setTimeout(() => setSeasonActionStatus(null), 4000);
+    } catch (err) {
+      setSeasonActionStatus({ success: null, error: `Error saving season details: ${err.message}` });
+    } finally {
+      setRenameLoading(false);
+    }
+  };
+
+  const handleDeleteSeason = async (seasonToDelete, teamName) => {
+    if (!seasonToDelete?.id) return;
+
+    if (allTeams.length <= 1) {
+      showWarningDialog(
+        'Cannot Delete Season',
+        'This is the only team and season in the system. At least one active season must remain.'
+      );
+      return;
+    }
+
+    const clientCount = getMatchCountForSeason(seasonToDelete.id);
+    if (clientCount > 0) {
+      showWarningDialog(
+        'Season Has Recorded Matches',
+        `Cannot delete season "${seasonToDelete.season || 'Active'}" because it contains ${clientCount} recorded match(es). To delete this season, its matches must be removed first.`
+      );
+      return;
+    }
+
+    try {
+      // Authoritative database check
+      const { count, error: countErr } = await supabase
+        .from('matches')
+        .select('id', { count: 'exact', head: true })
+        .eq('team_id', seasonToDelete.id);
+
+      if (countErr) throw countErr;
+      if (count && count > 0) {
+        showWarningDialog(
+          'Season Has Recorded Matches',
+          `Cannot delete season "${seasonToDelete.season || 'Active'}" because it contains ${count} recorded match(es). To delete this season, its matches must be removed first.`
+        );
+        return;
+      }
+
+      showConfirmDialog({
+        title: 'Delete Season',
+        message: `Are you sure you want to delete season "${seasonToDelete.season || 'Active'}" for team "${teamName}"? This season has no recorded matches and will be permanently removed.`,
+        type: 'danger',
+        confirmText: 'Delete Season',
+        onConfirm: async () => {
+          try {
+            // Clean up empty squad and assignments for this season
+            await supabase.from('squad').delete().eq('team_id', seasonToDelete.id);
+            await supabase.from('user_team_assignments').delete().eq('team_id', seasonToDelete.id);
+            const { error: delErr } = await supabase.from('team').delete().eq('id', seasonToDelete.id);
+            if (delErr) throw delErr;
+
+            const remainingTeams = allTeams.filter((t) => t.id !== seasonToDelete.id);
+            setAllTeams(remainingTeams);
+
+            // If active team was deleted, switch to another season of the same team, or the next available team
+            if (teamInfo?.id === seasonToDelete.id) {
+              const sameTeamAlt = remainingTeams.find(
+                (t) => (t.name || '').trim().toLowerCase() === (teamName || '').trim().toLowerCase()
+              );
+              const nextActive = sameTeamAlt || remainingTeams[0];
+              if (nextActive && onSelectTeam) {
+                onSelectTeam(nextActive);
+              }
+            }
+
+            setSeasonActionStatus({ success: `Season "${seasonToDelete.season || 'Active'}" deleted successfully.`, error: null });
+            setTimeout(() => setSeasonActionStatus(null), 4000);
+          } catch (delError) {
+            showWarningDialog('Error Deleting Season', `Failed to delete season: ${delError.message}`);
+          }
+        }
+      });
+    } catch (err) {
+      showWarningDialog('Error Checking Season', `Could not verify match count: ${err.message}`);
+    }
   };
 
   const handleSignOut = async () => {
@@ -644,6 +964,59 @@ export default function SettingsView({
                   />
                 </div>
 
+                <div className="input-group">
+                  <label className="label">Season *</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. 2026/27"
+                    value={seasonNameInput}
+                    onChange={(e) => setSeasonNameInput(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="input-group">
+                  <label className="label">League / Competition (optional)</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Autumn League, Spring League"
+                    value={leagueInput}
+                    onChange={(e) => setLeagueInput(e.target.value)}
+                  />
+                  <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                    Helps separate sub-seasons (e.g. Autumn League, Spring League) under the same team.
+                  </span>
+                </div>
+
+                <div className="input-group">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <label className="label" style={{ marginBottom: 0 }}>Season Timeframe / Dates (optional)</label>
+                    {detectedActiveTimeframe && (
+                      <button
+                        type="button"
+                        onClick={() => setTimeframeInput(detectedActiveTimeframe)}
+                        className="btn-link"
+                        style={{ fontSize: '0.72rem', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                      >
+                        Auto-fill from match dates ({detectedActiveTimeframe})
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. September 2026 – December 2026"
+                    value={timeframeInput}
+                    onChange={(e) => setTimeframeInput(e.target.value)}
+                    style={{ marginTop: '0.25rem' }}
+                  />
+                  <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                    The scheduled months or date range for this season.
+                  </span>
+                </div>
+
                 <div
                   style={{
                     display: 'flex',
@@ -719,14 +1092,18 @@ export default function SettingsView({
               </form>
             </div>
 
-            {/* Teams & Sub-teams Switcher / Creator */}
+            {/* Teams & Seasons in Club */}
             <div className="card mt-4">
               <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
                 <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
                   <Shield size={18} color="var(--color-secondary)" /> Teams &amp; Seasons in Club
                 </h2>
                 <button
-                  onClick={onAddNewTeam || (() => setShowAddTeamModal(true))}
+                  onClick={onAddNewTeam ? () => onAddNewTeam('') : (() => {
+                    setNewTeamName('');
+                    setNewSeasonName('');
+                    setShowAddTeamModal(true);
+                  })}
                   className="btn btn-secondary"
                   style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
                 >
@@ -735,42 +1112,215 @@ export default function SettingsView({
               </div>
 
               <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Switch active team context or add a new team profile.
+                Seasons are grouped by team. Switch active season, rename seasons, or remove seasons with no recorded data.
               </p>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {allTeams.map((t) => {
-                  const isActive = t.id === teamInfo?.id;
-                  const tClub = allClubs.find((c) => c.id === t.club_id);
+              {seasonActionStatus?.error && (
+                <div className="alert alert-danger mb-3 flex-row gap-2" style={{ alignItems: 'flex-start' }}>
+                  <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                  <span>{seasonActionStatus.error}</span>
+                </div>
+              )}
+
+              {seasonActionStatus?.success && (
+                <div className="alert alert-success mb-3 flex-row gap-2" style={{ alignItems: 'flex-start' }}>
+                  <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                  <span>{seasonActionStatus.success}</span>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                {groupedTeams.map((group) => {
+                  const isCurrentTeam = group.seasons.some((s) => s.id === teamInfo?.id);
+                  const tClub = allClubs.find((c) => c.id === group.club_id);
+
                   return (
                     <div
-                      key={t.id}
-                      onClick={() => onSelectTeam(t)}
+                      key={group.key}
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '0.75rem 1rem',
-                        borderRadius: 'var(--radius-lg)',
-                        border: '1px solid',
-                        borderColor: isActive ? 'var(--color-primary)' : 'var(--color-border)',
-                        background: isActive ? 'var(--color-primary-light)' : 'var(--color-bg-card)',
-                        cursor: 'pointer'
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 'var(--radius-xl)',
+                        background: 'var(--color-bg-card)',
+                        overflow: 'hidden',
+                        boxShadow: 'var(--shadow-sm)'
                       }}
                     >
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: isActive ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
-                          {t.name}
+                      {/* Team Header */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '0.75rem 1rem',
+                          background: isCurrentTeam ? 'rgba(2, 132, 199, 0.08)' : 'var(--color-border-light)',
+                          borderBottom: '1px solid var(--color-border)',
+                          flexWrap: 'wrap',
+                          gap: '0.5rem'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                          <div
+                            style={{
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: 'var(--radius-md)',
+                              background: isCurrentTeam ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                              color: 'white',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0
+                            }}
+                          >
+                            <Shield size={16} />
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: isCurrentTeam ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
+                              {group.name}
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                              {group.seasons.length} {group.seasons.length === 1 ? 'Season' : 'Seasons'} {tClub ? `• ${tClub.name}` : ''}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                          {t.season} {tClub ? `• ${tClub.name}` : ''}
-                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onAddNewTeam) {
+                              onAddNewTeam(group.name);
+                            } else {
+                              setNewTeamName(group.name);
+                              setNewSeasonName('');
+                              setShowAddTeamModal(true);
+                            }
+                          }}
+                          className="btn btn-secondary"
+                          style={{ width: 'auto', padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                          title={`Add a new season to ${group.name}`}
+                        >
+                          <Plus size={13} /> Add Season
+                        </button>
                       </div>
-                      {isActive && (
-                        <span className="badge badge-primary flex-row gap-1">
-                          <Check size={12} /> Active
-                        </span>
-                      )}
+
+                      {/* Seasons List */}
+                      <div style={{ padding: '0.4rem' }}>
+                        {group.seasons.map((s) => {
+                          const isActive = s.id === teamInfo?.id;
+                          const matchCount = getMatchCountForSeason(s.id);
+
+                          return (
+                            <div
+                              key={s.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '0.65rem 0.85rem',
+                                borderRadius: 'var(--radius-md)',
+                                margin: '0.2rem 0',
+                                border: '1px solid',
+                                borderColor: isActive ? 'var(--color-primary)' : 'transparent',
+                                background: isActive ? 'var(--color-primary-light)' : 'transparent',
+                                flexWrap: 'wrap',
+                                gap: '0.5rem'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: '160px' }}>
+                                <Calendar size={15} style={{ color: isActive ? 'var(--color-primary)' : 'var(--color-text-muted)', flexShrink: 0 }} />
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                    <span style={{ fontWeight: 600, fontSize: '0.9rem', color: isActive ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
+                                      {s.season || 'Active Season'}
+                                    </span>
+                                    {s.league && (
+                                      <span
+                                        className="badge"
+                                        style={{
+                                          fontSize: '0.68rem',
+                                          padding: '0.1rem 0.45rem',
+                                          background: isActive ? 'var(--color-primary-light)' : 'var(--color-border-light)',
+                                          color: isActive ? 'var(--color-primary-dark)' : 'var(--color-text-main)',
+                                          fontWeight: 600,
+                                          border: '1px solid var(--color-border)'
+                                        }}
+                                      >
+                                        {s.league}
+                                      </span>
+                                    )}
+                                    {isActive && (
+                                      <span className="badge badge-primary flex-row gap-1" style={{ fontSize: '0.65rem', padding: '0.15rem 0.45rem' }}>
+                                        <Check size={10} /> Active
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                    {(s.timeframe || getEffectiveTimeframe(s, allSeasonsMatches.filter((m) => m.team_id === s.id))) && (
+                                      <span>
+                                        {s.timeframe || getEffectiveTimeframe(s, allSeasonsMatches.filter((m) => m.team_id === s.id))}
+                                        <span style={{ margin: '0 0.35rem', opacity: 0.5 }}>•</span>
+                                      </span>
+                                    )}
+                                    {matchCount > 0 ? (
+                                      <span style={{ color: 'var(--color-primary-dark)', fontWeight: 500 }}>{matchCount} {matchCount === 1 ? 'match recorded' : 'matches recorded'}</span>
+                                    ) : (
+                                      <span style={{ fontStyle: 'italic', opacity: 0.8 }}>No matches recorded (can delete)</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto' }}>
+                                {!isActive && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectTeam(s)}
+                                    className="btn btn-secondary"
+                                    style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem', width: 'auto' }}
+                                  >
+                                    Select
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingSeason(s);
+                                    setEditingSeasonName(s.season || '');
+                                    setEditingLeagueName(s.league || s.settings?.league || '');
+                                    setEditingTimeframe(s.timeframe || s.settings?.timeframe || '');
+                                  }}
+                                  className="btn-icon-subtle"
+                                  title="Edit season details"
+                                  style={{ padding: '0.35rem' }}
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSeason(s, group.name)}
+                                  className="btn-icon-subtle"
+                                  disabled={matchCount > 0}
+                                  title={
+                                    matchCount > 0
+                                      ? `Cannot delete: season has ${matchCount} recorded match(es)`
+                                      : 'Delete unused season'
+                                  }
+                                  style={{
+                                    padding: '0.35rem',
+                                    color: matchCount > 0 ? 'var(--color-text-muted)' : 'var(--color-danger)',
+                                    opacity: matchCount > 0 ? 0.35 : 1,
+                                    cursor: matchCount > 0 ? 'not-allowed' : 'pointer'
+                                  }}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
@@ -792,14 +1342,34 @@ export default function SettingsView({
                       />
                     </div>
                     <div className="input-group">
-                      <label className="label">Season</label>
+                      <label className="label">Season *</label>
                       <input
                         type="text"
                         className="input"
-                        placeholder="e.g. 2025/26"
+                        placeholder="e.g. 2026/27"
                         value={newSeasonName}
                         onChange={(e) => setNewSeasonName(e.target.value)}
                         required
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label className="label">League / Competition (optional)</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="e.g. Autumn League, Spring League"
+                        value={newLeagueName}
+                        onChange={(e) => setNewLeagueName(e.target.value)}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label className="label">Season Timeframe / Dates (optional)</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="e.g. September 2026 – December 2026"
+                        value={newTimeframe}
+                        onChange={(e) => setNewTimeframe(e.target.value)}
                       />
                     </div>
                     {isDev && allClubs.length > 1 && (
@@ -1315,6 +1885,95 @@ export default function SettingsView({
           onClubsUpdated={setAllClubs}
         />
       )}
+
+      {/* Edit Season Details Modal */}
+      {editingSeason && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '440px' }}>
+            <div className="flex-between mb-3">
+              <h3 className="title-sm" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Edit2 size={16} style={{ color: 'var(--color-primary)' }} />
+                Edit Season Details
+              </h3>
+              <button className="btn-icon" onClick={() => setEditingSeason(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+              Edit season, league, and timeframe for <strong>{editingSeason.name}</strong>.
+            </p>
+
+            <form onSubmit={handleSaveEditSeason}>
+              <div className="input-group">
+                <label className="label">Season *</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={editingSeasonName}
+                  onChange={(e) => setEditingSeasonName(e.target.value)}
+                  placeholder="e.g. 2026/27"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div className="input-group">
+                <label className="label">League / Competition (optional)</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={editingLeagueName}
+                  onChange={(e) => setEditingLeagueName(e.target.value)}
+                  placeholder="e.g. Autumn League, Spring League"
+                />
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                  Distinguishes sub-seasons (e.g. Autumn League vs Spring League).
+                </span>
+              </div>
+
+              <div className="input-group">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.4rem' }}>
+                  <label className="label" style={{ marginBottom: 0 }}>Season Timeframe / Dates (optional)</label>
+                  {editingComputedTimeframe && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingTimeframe(editingComputedTimeframe)}
+                      className="btn-link"
+                      style={{ fontSize: '0.72rem', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      Use match dates ({editingComputedTimeframe})
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  className="input"
+                  value={editingTimeframe}
+                  onChange={(e) => setEditingTimeframe(e.target.value)}
+                  placeholder="e.g. September 2026 – December 2026"
+                  style={{ marginTop: '0.25rem' }}
+                />
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                  The months or dates when matches for this season are scheduled.
+                </span>
+              </div>
+
+              <div className="flex-row gap-2 mt-4">
+                <button type="submit" disabled={renameLoading} className="btn btn-primary" style={{ flex: 1 }}>
+                  {renameLoading ? 'Saving...' : 'Save Season Details'}
+                </button>
+                <button type="button" onClick={() => setEditingSeason(null)} className="btn btn-secondary" style={{ width: 'auto' }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Global In-App Confirmation / Warning Dialog */}
+      <ConfirmDialog {...dialogConfig} />
     </div>
   );
 }

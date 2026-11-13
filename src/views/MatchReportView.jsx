@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Target, Award, Shield, X, Check, ChevronDown, Clock, ArrowUp, ArrowDown, Trash2, Plus, Sparkles, HelpCircle, RotateCcw, Edit2, Crosshair, ShieldCheck, Star } from 'lucide-react';
 import TopNav from '../components/TopNav';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { supabase } from '../supabaseClient';
 import {
   computeTimelineWithScores,
@@ -52,6 +53,26 @@ export default function MatchReportView({
   const [newGoalType, setNewGoalType] = useState('TEAM'); // 'TEAM' | 'OPPONENT'
   const [newGoalScorerId, setNewGoalScorerId] = useState('UNASSIGNED');
   const [newGoalAssisterId, setNewGoalAssisterId] = useState('');
+
+  // In-app Warning & Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState(null);
+
+  const showConfirmDialog = ({ title, message, type = 'warning', confirmText = 'Confirm', onConfirm }) => {
+    setDialogConfig({
+      isOpen: true,
+      type,
+      isAlert: false,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        setDialogConfig(null);
+        await onConfirm();
+      },
+      onCancel: () => setDialogConfig(null)
+    });
+  };
 
   const handleReopenTracker = async () => {
     setMatches((prev) => prev.map((m) => (m.id === activeMatch.id ? { ...m, status: 'active' } : m)));
@@ -216,49 +237,54 @@ export default function MatchReportView({
   };
 
   // Reset timeline order so Team goals appear first and Opponent goals at end
-  const handleResetTimelineOrder = async () => {
+  const handleResetTimelineOrder = () => {
     if (isFinished) return;
-    if (!window.confirm('Reset the goal timeline so all Team goals appear first and Opponent goals appear at the end? You can then move them into your desired order.')) {
-      return;
-    }
-    const teamGoalsList = goalEvents.filter((e) => e.scorer_id !== 'OPPONENT');
-    const oppGoalsList = goalEvents.filter((e) => e.scorer_id === 'OPPONENT');
-    const reordered = [...teamGoalsList, ...oppGoalsList];
+    showConfirmDialog({
+      title: 'Reset Goal Timeline',
+      message: 'Reset the goal timeline so all Team goals appear first and Opponent goals appear at the end? You can then move them into your desired order.',
+      type: 'warning',
+      confirmText: 'Reset Order',
+      onConfirm: async () => {
+        const teamGoalsList = goalEvents.filter((e) => e.scorer_id !== 'OPPONENT');
+        const oppGoalsList = goalEvents.filter((e) => e.scorer_id === 'OPPONENT');
+        const reordered = [...teamGoalsList, ...oppGoalsList];
 
-    const validTimes = goalEvents
-      .map((e) => (e.created_at ? new Date(e.created_at).getTime() : 0))
-      .filter((t) => !isNaN(t) && t > 0);
+        const validTimes = goalEvents
+          .map((e) => (e.created_at ? new Date(e.created_at).getTime() : 0))
+          .filter((t) => !isNaN(t) && t > 0);
 
-    let startTimestamp = validTimes.length > 0 ? Math.min(...validTimes) : null;
-    if (!startTimestamp) {
-      if (activeMatch.date) {
-        const d = new Date(activeMatch.date);
-        d.setUTCHours(12, 0, 0, 0);
-        startTimestamp = d.getTime();
-      } else {
-        startTimestamp = Date.now();
+        let startTimestamp = validTimes.length > 0 ? Math.min(...validTimes) : null;
+        if (!startTimestamp) {
+          if (activeMatch.date) {
+            const d = new Date(activeMatch.date);
+            d.setUTCHours(12, 0, 0, 0);
+            startTimestamp = d.getTime();
+          } else {
+            startTimestamp = Date.now();
+          }
+        }
+
+        const stamped = reordered.map((item, idx) => ({
+          ...item,
+          created_at: new Date(startTimestamp + idx * 10000).toISOString()
+        }));
+
+        setGoalEvents(stamped);
+        if (setAllGoalEvents) {
+          setAllGoalEvents((prev) => {
+            const others = prev.filter((e) => e.match_id !== activeMatch.id);
+            return [...others, ...stamped];
+          });
+        }
+
+        for (let i = 0; i < stamped.length; i++) {
+          await supabase
+            .from('goal_events')
+            .update({ created_at: stamped[i].created_at })
+            .eq('id', stamped[i].id);
+        }
       }
-    }
-
-    const stamped = reordered.map((item, idx) => ({
-      ...item,
-      created_at: new Date(startTimestamp + idx * 10000).toISOString()
-    }));
-
-    setGoalEvents(stamped);
-    if (setAllGoalEvents) {
-      setAllGoalEvents((prev) => {
-        const others = prev.filter((e) => e.match_id !== activeMatch.id);
-        return [...others, ...stamped];
-      });
-    }
-
-    for (let i = 0; i < stamped.length; i++) {
-      await supabase
-        .from('goal_events')
-        .update({ created_at: stamped[i].created_at })
-        .eq('id', stamped[i].id);
-    }
+    });
   };
 
   // Assign or change assist
@@ -407,83 +433,87 @@ export default function MatchReportView({
   };
 
   // Delete goal event
-  const handleDeleteGoal = async (eventId) => {
+  const handleDeleteGoal = (eventId) => {
     if (isFinished) return;
     const evt = goalEvents.find((e) => e.id === eventId);
     if (!evt) return;
 
-    if (!window.confirm('Delete this goal from the timeline? This will also decrement the match score and player stats.')) {
-      return;
-    }
+    showConfirmDialog({
+      title: 'Delete Goal',
+      message: 'Delete this goal from the timeline? This will also decrement the match score and player stats.',
+      type: 'danger',
+      confirmText: 'Delete Goal',
+      onConfirm: async () => {
+        setGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
+        if (setAllGoalEvents) {
+          setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
+        }
 
-    setGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
-    if (setAllGoalEvents) {
-      setAllGoalEvents((prev) => prev.filter((e) => e.id !== eventId));
-    }
+        await supabase.from('goal_events').delete().eq('id', eventId);
 
-    await supabase.from('goal_events').delete().eq('id', eventId);
+        const isOpponent = evt.scorer_id === 'OPPONENT';
+        const isUnassigned = evt.scorer_id === 'UNASSIGNED' || !evt.scorer_id;
 
-    const isOpponent = evt.scorer_id === 'OPPONENT';
-    const isUnassigned = evt.scorer_id === 'UNASSIGNED' || !evt.scorer_id;
+        if (matches && setMatches) {
+          const m = matches.find((x) => x.id === activeMatch.id);
+          if (m) {
+            if (isOpponent) {
+              const newOppGoals = Math.max(0, (m.opponent_goals || 0) - 1);
+              setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, opponent_goals: newOppGoals } : match)));
+              await supabase.from('matches').update({ opponent_goals: newOppGoals }).eq('id', activeMatch.id);
+            } else {
+              const newTeamGoals = Math.max(0, (m.team_goals || 0) - 1);
+              const newStats = { ...m.stats };
 
-    if (matches && setMatches) {
-      const m = matches.find((x) => x.id === activeMatch.id);
-      if (m) {
-        if (isOpponent) {
-          const newOppGoals = Math.max(0, (m.opponent_goals || 0) - 1);
-          setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, opponent_goals: newOppGoals } : match)));
-          await supabase.from('matches').update({ opponent_goals: newOppGoals }).eq('id', activeMatch.id);
-        } else {
-          const newTeamGoals = Math.max(0, (m.team_goals || 0) - 1);
-          const newStats = { ...m.stats };
+              if (!isUnassigned && newStats[evt.scorer_id]) {
+                const sStats = newStats[evt.scorer_id];
+                const updatedGoals = Math.max(0, (sStats.goals || 0) - 1);
+                const updatedAttempts = showAttempts ? Math.max(0, (sStats.attempts || 0) - 1) : (sStats.attempts || 0);
+                newStats[evt.scorer_id] = { ...sStats, goals: updatedGoals, attempts: updatedAttempts };
+                
+                const payload = {
+                  match_id: activeMatch.id,
+                  player_id: evt.scorer_id,
+                  goals: updatedGoals,
+                  assists: sStats.assists || 0,
+                  saves: sStats.saves || 0,
+                  is_goalkeeper: sStats.is_goalkeeper || false,
+                  attempts: updatedAttempts,
+                  defensive_contributions: sStats.defensive_contributions || 0
+                };
+                let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
+                if (error && (error.message?.includes('column') || error.code === '42703')) {
+                  await supabase.from('match_stats').upsert(
+                    { match_id: activeMatch.id, player_id: evt.scorer_id, goals: updatedGoals, assists: sStats.assists || 0, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
+                    { onConflict: 'match_id,player_id' }
+                  );
+                }
+              }
 
-          if (!isUnassigned && newStats[evt.scorer_id]) {
-            const sStats = newStats[evt.scorer_id];
-            const updatedGoals = Math.max(0, (sStats.goals || 0) - 1);
-            const updatedAttempts = showAttempts ? Math.max(0, (sStats.attempts || 0) - 1) : (sStats.attempts || 0);
-            newStats[evt.scorer_id] = { ...sStats, goals: updatedGoals, attempts: updatedAttempts };
-            
-            const payload = {
-              match_id: activeMatch.id,
-              player_id: evt.scorer_id,
-              goals: updatedGoals,
-              assists: sStats.assists || 0,
-              saves: sStats.saves || 0,
-              is_goalkeeper: sStats.is_goalkeeper || false,
-              attempts: updatedAttempts,
-              defensive_contributions: sStats.defensive_contributions || 0
-            };
-            let { error } = await supabase.from('match_stats').upsert(payload, { onConflict: 'match_id,player_id' });
-            if (error && (error.message?.includes('column') || error.code === '42703')) {
-              await supabase.from('match_stats').upsert(
-                { match_id: activeMatch.id, player_id: evt.scorer_id, goals: updatedGoals, assists: sStats.assists || 0, saves: sStats.saves || 0, is_goalkeeper: sStats.is_goalkeeper || false },
-                { onConflict: 'match_id,player_id' }
-              );
+              if (evt.assister_id && newStats[evt.assister_id]) {
+                const aStats = newStats[evt.assister_id];
+                const updatedAssists = Math.max(0, (aStats.assists || 0) - 1);
+                newStats[evt.assister_id] = { ...aStats, assists: updatedAssists };
+                await supabase.from('match_stats').upsert(
+                  {
+                    match_id: activeMatch.id,
+                    player_id: evt.assister_id,
+                    goals: aStats.goals || 0,
+                    assists: updatedAssists,
+                    saves: aStats.saves || 0,
+                    is_goalkeeper: aStats.is_goalkeeper || false
+                  },
+                  { onConflict: 'match_id,player_id' }
+                );
+              }
+
+              setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats, team_goals: newTeamGoals } : match)));
+              await supabase.from('matches').update({ team_goals: newTeamGoals }).eq('id', activeMatch.id);
             }
           }
-
-          if (evt.assister_id && newStats[evt.assister_id]) {
-            const aStats = newStats[evt.assister_id];
-            const updatedAssists = Math.max(0, (aStats.assists || 0) - 1);
-            newStats[evt.assister_id] = { ...aStats, assists: updatedAssists };
-            await supabase.from('match_stats').upsert(
-              {
-                match_id: activeMatch.id,
-                player_id: evt.assister_id,
-                goals: aStats.goals || 0,
-                assists: updatedAssists,
-                saves: aStats.saves || 0,
-                is_goalkeeper: aStats.is_goalkeeper || false
-              },
-              { onConflict: 'match_id,player_id' }
-            );
-          }
-
-          setMatches((prev) => prev.map((match) => (match.id === activeMatch.id ? { ...match, stats: newStats, team_goals: newTeamGoals } : match)));
-          await supabase.from('matches').update({ team_goals: newTeamGoals }).eq('id', activeMatch.id);
         }
       }
-    }
+    });
   };
 
   // Add new goal
@@ -1221,6 +1251,9 @@ export default function MatchReportView({
           </div>
         </div>
       )}
+
+      {/* In-app Warning and Confirmation Dialog */}
+      <ConfirmDialog {...dialogConfig} />
     </div>
   );
 }

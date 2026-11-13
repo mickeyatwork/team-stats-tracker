@@ -28,6 +28,7 @@ import {
   isDevAdmin
 } from './utils/authRoles';
 import { Shield, X, AlertOctagon, LogOut } from 'lucide-react';
+import ConfirmDialog from './components/ConfirmDialog';
 
 export default function App() {
   // Theme State
@@ -67,9 +68,26 @@ export default function App() {
   const [showAddTeamModal, setShowAddTeamModal] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
   const [newSeasonName, setNewSeasonName] = useState('');
+  const [newLeagueName, setNewLeagueName] = useState('');
+  const [newTimeframe, setNewTimeframe] = useState('');
   const [newTeamClubId, setNewTeamClubId] = useState('');
   const [carryOverSquad, setCarryOverSquad] = useState(true);
   const [addTeamLoading, setAddTeamLoading] = useState(false);
+
+  // In-app Warning & Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState(null);
+
+  const showWarningDialog = (title, message) => {
+    setDialogConfig({
+      isOpen: true,
+      type: 'warning',
+      isAlert: true,
+      title,
+      message,
+      confirmText: 'Understood',
+      onConfirm: () => setDialogConfig(null)
+    });
+  };
 
   const activeMatch = matches.find((m) => m.id === activeMatchId);
 
@@ -243,10 +261,17 @@ export default function App() {
         };
 
         const enrichedTeams = teamsData
-          .map((t) => ({
-            ...t,
-            ...getTeamFeatures(t)
-          }))
+          .map((t) => {
+            const settings = t.settings || {};
+            const league = (t.league || settings.league || localStorage.getItem(`team_league_${t.id}`) || '').trim();
+            const timeframe = (t.timeframe || settings.timeframe || localStorage.getItem(`team_timeframe_${t.id}`) || '').trim();
+            return {
+              ...t,
+              league,
+              timeframe,
+              ...getTeamFeatures(t)
+            };
+          })
           .sort((a, b) => {
             const seasonDiff = getSeasonSortScore(b.season) - getSeasonSortScore(a.season);
             if (seasonDiff !== 0) return seasonDiff;
@@ -441,9 +466,11 @@ export default function App() {
     setTeamInfo(team);
   };
 
-  const handleAddNewTeam = () => {
-    setNewTeamName(teamInfo?.name || '');
+  const handleAddNewTeam = (prefillTeamName = null) => {
+    setNewTeamName(typeof prefillTeamName === 'string' ? prefillTeamName : (teamInfo?.name || ''));
     setNewSeasonName('');
+    setNewLeagueName('');
+    setNewTimeframe('');
     setCarryOverSquad(true);
     setNewTeamClubId(currentUserProfile?.club_id || teamInfo?.club_id || (allClubs[0]?.id || ''));
     setShowAddTeamModal(true);
@@ -458,28 +485,47 @@ export default function App() {
       ? (newTeamClubId || (allClubs[0]?.id || null))
       : (currentUserProfile?.club_id || (allClubs[0]?.id || null));
 
+    const cleanLeague = newLeagueName.trim();
+    const cleanTimeframe = newTimeframe.trim();
+
+    const newSettings = {
+      ...(teamInfo?.settings ? teamInfo.settings : {}),
+      ...(cleanLeague ? { league: cleanLeague } : {}),
+      ...(cleanTimeframe ? { timeframe: cleanTimeframe } : {})
+    };
+
     const newTeamObj = {
       user_id: session.user.id,
       name: newTeamName.trim(),
       season: newSeasonName.trim(),
+      league: cleanLeague || null,
+      timeframe: cleanTimeframe || null,
       club_id: targetClubId,
       hide_positions: teamInfo?.hide_positions || false,
-      ...(teamInfo?.settings ? { settings: teamInfo.settings } : {})
+      settings: newSettings
     };
 
     try {
       let { data, error } = await supabase.from('team').insert([newTeamObj]).select().single();
 
+      // Fallback if league or timeframe columns do not exist on team table
+      if (error && (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204')) {
+        const { league: _omitL, timeframe: _omitT, ...fallbackWithoutCols } = newTeamObj;
+        const retry = await supabase.from('team').insert([fallbackWithoutCols]).select().single();
+        data = retry.data;
+        error = retry.error;
+      }
+
       // Fallback if settings column does not exist on team table
       if (error && (error.message?.includes('settings') || error.code === 'PGRST204')) {
-        const { settings: _omitSettings, ...fallbackTeamObj } = newTeamObj;
+        const { settings: _omitSettings, league: _omitL, timeframe: _omitT, ...fallbackTeamObj } = newTeamObj;
         const retry = await supabase.from('team').insert([fallbackTeamObj]).select().single();
         data = retry.data;
         error = retry.error;
       }
 
       if (error) {
-        alert(`Error adding team: ${error.message}`);
+        showWarningDialog('Error Adding Team', `Error adding team: ${error.message}`);
         setAddTeamLoading(false);
         return;
       }
@@ -493,6 +539,13 @@ export default function App() {
           } catch {
             // ignore assignment error if already assigned or table not used
           }
+        }
+
+        try {
+          if (cleanLeague) localStorage.setItem(`team_league_${data.id}`, cleanLeague);
+          if (cleanTimeframe) localStorage.setItem(`team_timeframe_${data.id}`, cleanTimeframe);
+        } catch {
+          // ignore localStorage error
         }
 
         // Carry over current squad players to the new season if checked
@@ -512,6 +565,8 @@ export default function App() {
 
         const enrichedTeam = {
           ...data,
+          league: cleanLeague || data.league || data.settings?.league || '',
+          timeframe: cleanTimeframe || data.timeframe || data.settings?.timeframe || '',
           ...getTeamFeatures(data)
         };
         setAllTeams([enrichedTeam, ...allTeams]);
@@ -519,9 +574,11 @@ export default function App() {
         setShowAddTeamModal(false);
         setNewTeamName('');
         setNewSeasonName('');
+        setNewLeagueName('');
+        setNewTimeframe('');
       }
     } catch (err) {
-      alert(`Error creating team: ${err.message}`);
+      showWarningDialog('Error Creating Team', `Error creating team: ${err.message}`);
     } finally {
       setAddTeamLoading(false);
     }
@@ -601,6 +658,7 @@ export default function App() {
           setCurrentView={setCurrentView}
           currentTheme={currentTheme}
           setCurrentTheme={setCurrentTheme}
+          allSeasonsMatches={allSeasonsMatches}
         />
       );
     }
@@ -746,19 +804,56 @@ export default function App() {
                   placeholder="e.g. Tower Hill U8s"
                   value={newTeamName}
                   onChange={(e) => setNewTeamName(e.target.value)}
+                  list="existing-teams-list"
                   required
                 />
+                <datalist id="existing-teams-list">
+                  {Array.from(new Set(allTeams.map((t) => t.name).filter(Boolean))).map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                  Select an existing team name to add a season to it, or type a new team name.
+                </span>
               </div>
               <div className="input-group">
-                <label className="label">Season</label>
+                <label className="label">Season *</label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="e.g. 2025/26"
+                  placeholder="e.g. 2026/27"
                   value={newSeasonName}
                   onChange={(e) => setNewSeasonName(e.target.value)}
                   required
                 />
+              </div>
+
+              <div className="input-group">
+                <label className="label">League / Competition (optional)</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="e.g. Autumn League, Spring League"
+                  value={newLeagueName}
+                  onChange={(e) => setNewLeagueName(e.target.value)}
+                />
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                  Distinguishes sub-seasons (e.g. Autumn League, Winter Cup, Spring League).
+                </span>
+              </div>
+
+              <div className="input-group">
+                <label className="label">Season Timeframe / Dates (optional)</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="e.g. September 2026 – December 2026"
+                  value={newTimeframe}
+                  onChange={(e) => setNewTimeframe(e.target.value)}
+                />
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                  The months or dates when matches for this season are scheduled.
+                </span>
               </div>
 
               {isDevAdmin(currentUserProfile) && allClubs.length > 1 && (
@@ -818,6 +913,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* In-app Warning and Confirmation Dialog */}
+      <ConfirmDialog {...dialogConfig} />
     </>
   );
 }

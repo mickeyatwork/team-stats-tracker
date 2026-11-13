@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Shield, Plus, X, Edit2, Trash2, MapPin, Check } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function ClubManagementModal({
   isOpen,
@@ -19,6 +20,38 @@ export default function ClubManagementModal({
   const [editingClub, setEditingClub] = useState(null);
   const [editName, setEditName] = useState('');
   const [editLocation, setEditLocation] = useState('');
+
+  // In-app Warning & Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState(null);
+
+  const showWarningDialog = (title, message) => {
+    setDialogConfig({
+      isOpen: true,
+      type: 'warning',
+      isAlert: true,
+      title,
+      message,
+      confirmText: 'Understood',
+      onConfirm: () => setDialogConfig(null)
+    });
+  };
+
+  const showConfirmDialog = ({ title, message, type = 'danger', confirmText = 'Confirm', onConfirm }) => {
+    setDialogConfig({
+      isOpen: true,
+      type,
+      isAlert: false,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        setDialogConfig(null);
+        await onConfirm();
+      },
+      onCancel: () => setDialogConfig(null)
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -80,30 +113,38 @@ export default function ClubManagementModal({
       }
       setEditingClub(null);
     } catch (err) {
-      alert(`Failed to update club: ${err.message}`);
+      showWarningDialog('Update Failed', `Failed to update club: ${err.message}`);
     }
   };
 
   const handleDeleteClub = async (club) => {
     const teamsInClub = allTeams.filter((t) => t.club_id === club.id);
     if (teamsInClub.length > 0) {
-      alert(`Cannot delete "${club.name}" because it still contains ${teamsInClub.length} team(s). Reassign or remove the teams first.`);
+      showWarningDialog(
+        'Cannot Delete Club',
+        `Cannot delete "${club.name}" because it still contains ${teamsInClub.length} team(s). Reassign or remove the teams first.`
+      );
       return;
     }
 
-    const confirm = window.confirm(`Are you sure you want to delete club "${club.name}"?`);
-    if (!confirm) return;
+    showConfirmDialog({
+      title: 'Delete Club',
+      message: `Are you sure you want to delete club "${club.name}"? This action cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Club',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase.from('club').delete().eq('id', club.id);
+          if (error) throw error;
 
-    try {
-      const { error } = await supabase.from('club').delete().eq('id', club.id);
-      if (error) throw error;
-
-      if (onClubsUpdated) {
-        onClubsUpdated(allClubs.filter((c) => c.id !== club.id));
+          if (onClubsUpdated) {
+            onClubsUpdated(allClubs.filter((c) => c.id !== club.id));
+          }
+        } catch (err) {
+          showWarningDialog('Delete Failed', `Failed to delete club: ${err.message}`);
+        }
       }
-    } catch (err) {
-      alert(`Failed to delete club: ${err.message}`);
-    }
+    });
   };
 
   return (
@@ -272,6 +313,9 @@ export default function ClubManagementModal({
           </form>
         </div>
       </div>
+
+      {/* In-app Warning and Confirmation Dialog */}
+      <ConfirmDialog {...dialogConfig} />
     </div>
   );
 }
