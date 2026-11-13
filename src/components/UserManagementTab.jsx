@@ -20,6 +20,7 @@ import {
   isTeamAdmin
 } from '../utils/authRoles';
 import { sendUserInviteEmail } from '../utils/emailService';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function UserManagementTab({
   currentUserProfile,
@@ -51,6 +52,39 @@ export default function UserManagementTab({
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [inviteNotice, setInviteNotice] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [inviteBoxCopied, setInviteBoxCopied] = useState(false);
+
+  // In-app Warning & Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState(null);
+
+  const showWarningDialog = (title, message) => {
+    setDialogConfig({
+      isOpen: true,
+      type: 'warning',
+      isAlert: true,
+      title,
+      message,
+      confirmText: 'Understood',
+      onConfirm: () => setDialogConfig(null)
+    });
+  };
+
+  const showConfirmDialog = ({ title, message, type = 'danger', confirmText = 'Confirm', onConfirm }) => {
+    setDialogConfig({
+      isOpen: true,
+      type,
+      isAlert: false,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        setDialogConfig(null);
+        await onConfirm();
+      },
+      onCancel: () => setDialogConfig(null)
+    });
+  };
 
   const isDev = isDevAdmin(currentUserProfile);
   const isTeamAdm = isTeamAdmin(currentUserProfile);
@@ -208,7 +242,10 @@ export default function UserManagementTab({
   const handleToggleUserStatus = async (user) => {
     // Safety check: Dev Admin cannot deactivate themselves
     if (user.email === session?.user?.email) {
-      alert("You cannot deactivate your own administrative account.");
+      showWarningDialog(
+        'Action Not Allowed',
+        'You cannot deactivate your own administrative account.'
+      );
       return;
     }
 
@@ -222,30 +259,36 @@ export default function UserManagementTab({
       if (error) throw error;
       setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: nextStatus } : u)));
     } catch (err) {
-      alert(`Failed to update status: ${err.message}`);
+      showWarningDialog('Status Update Failed', `Failed to update status: ${err.message}`);
     }
   };
 
   const handleDeleteUser = async (user) => {
     if (user.email === session?.user?.email) {
-      alert("You cannot delete your own administrative account.");
+      showWarningDialog(
+        'Action Not Allowed',
+        'You cannot delete your own administrative account.'
+      );
       return;
     }
 
-    const confirmDelete = window.confirm(
-      `Are you sure you want to remove user "${user.name || user.email}"? Their team assignments will also be deleted.`
-    );
-    if (!confirmDelete) return;
+    showConfirmDialog({
+      title: 'Remove User',
+      message: `Are you sure you want to remove user "${user.name || user.email}"? Their team assignments will also be permanently deleted.`,
+      type: 'danger',
+      confirmText: 'Delete User',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase.from('user_profiles').delete().eq('id', user.id);
+          if (error) throw error;
 
-    try {
-      const { error } = await supabase.from('user_profiles').delete().eq('id', user.id);
-      if (error) throw error;
-
-      setUsers((prev) => prev.filter((u) => u.id !== user.id));
-      setAssignments((prev) => prev.filter((a) => a.user_profile_id !== user.id));
-    } catch (err) {
-      alert(`Failed to delete user: ${err.message}`);
-    }
+          setUsers((prev) => prev.filter((u) => u.id !== user.id));
+          setAssignments((prev) => prev.filter((a) => a.user_profile_id !== user.id));
+        } catch (err) {
+          showWarningDialog('Delete User Failed', `Failed to delete user: ${err.message}`);
+        }
+      }
+    });
   };
 
   const handleOpenEditModal = (user) => {
@@ -289,7 +332,7 @@ export default function UserManagementTab({
       setShowEditModal(false);
       setSelectedUser(null);
     } catch (err) {
-      alert(`Failed to update user: ${err.message}`);
+      showWarningDialog('Update Failed', `Failed to update user: ${err.message}`);
     }
   };
 
@@ -695,10 +738,19 @@ export default function UserManagementTab({
                       onClick={() => {
                         const str = `Login URL: ${window.location.origin}\nEmail: ${inviteNotice.credentials.email}\nTemporary Password: ${inviteNotice.credentials.password}`;
                         navigator.clipboard.writeText(str);
-                        alert('Credentials copied to clipboard!');
+                        setInviteBoxCopied(true);
+                        setTimeout(() => setInviteBoxCopied(false), 2500);
                       }}
                     >
-                      <Copy size={12} /> Copy Invite Message
+                      {inviteBoxCopied ? (
+                        <>
+                          <Check size={12} color="var(--color-primary)" /> Copied to Clipboard!
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={12} /> Copy Invite Message
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
@@ -992,6 +1044,9 @@ export default function UserManagementTab({
           </div>
         </div>
       )}
+
+      {/* In-app Warning and Confirmation Dialog */}
+      <ConfirmDialog {...dialogConfig} />
     </div>
   );
 }

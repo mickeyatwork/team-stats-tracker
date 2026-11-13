@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Trophy, Plus, X, Eye, Play, Edit2, Trash2, CheckCircle, Users } from 'lucide-react';
 import TopNav from '../components/TopNav';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { supabase } from '../supabaseClient';
 import { parseTournament, encodeTournament, KNOCKOUT_ROUNDS, isTournamentFinished, setTournamentFinishedStatus, saveTournament, getTournamentAvailablePlayers, setTournamentAvailablePlayers } from '../utils/tournamentUtils';
 import { getDefaultMatchVariant } from '../utils/variantPreferences';
@@ -21,26 +22,41 @@ export default function TournamentView({
   const [showAddMatchModal, setShowAddMatchModal] = useState(false);
   const [matchToDelete, setMatchToDelete] = useState(null);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
-  const [isFinished, setIsFinished] = useState(() => isTournamentFinished(tournamentName));
+  const [isFinished, setIsFinished] = useState(() => isTournamentFinished(tournamentName, teamInfo?.id));
   const [tournamentAvailableIds, setTournamentAvailableIds] = useState(() => {
-    const saved = getTournamentAvailablePlayers(tournamentName);
+    const saved = getTournamentAvailablePlayers(tournamentName, teamInfo?.id);
     return saved && saved.length > 0 ? saved : squad.map((p) => p.id);
   });
   const [showEditSquadModal, setShowEditSquadModal] = useState(false);
   const [editTourneySquadSelection, setEditTourneySquadSelection] = useState([]);
 
+  // In-app Warning & Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState(null);
+
+  const showWarningDialog = (title, message) => {
+    setDialogConfig({
+      isOpen: true,
+      type: 'warning',
+      isAlert: true,
+      title,
+      message,
+      confirmText: 'Understood',
+      onConfirm: () => setDialogConfig(null)
+    });
+  };
+
   useEffect(() => {
-    setIsFinished(isTournamentFinished(tournamentName));
+    setIsFinished(isTournamentFinished(tournamentName, teamInfo?.id));
     if (tournamentName) {
-      saveTournament(tournamentName);
-      const saved = getTournamentAvailablePlayers(tournamentName);
+      saveTournament(tournamentName, {}, teamInfo?.id);
+      const saved = getTournamentAvailablePlayers(tournamentName, teamInfo?.id);
       if (saved && saved.length > 0) {
         setTournamentAvailableIds(saved);
       } else {
         setTournamentAvailableIds(squad.map((p) => p.id));
       }
     }
-  }, [tournamentName, squad]);
+  }, [tournamentName, squad, teamInfo?.id]);
 
   const tournamentAvailableSquad = useMemo(() => {
     const available = squad.filter((p) => tournamentAvailableIds.includes(p.id));
@@ -73,11 +89,12 @@ export default function TournamentView({
     setShowAddMatchModal(true);
   };
 
-  // Filter tournament matches
+  // Filter tournament matches (strictly scoped to this team/season)
   const tournamentMatches = useMemo(() => {
     return matches
       .filter((m) => {
         if (m.competition !== 'Tournament' || !m.tournament) return false;
+        if (teamInfo?.id && m.team_id && m.team_id !== teamInfo.id) return false;
         const { name } = parseTournament(m.tournament);
         return name.toLowerCase() === (tournamentName || '').toLowerCase();
       })
@@ -90,7 +107,7 @@ export default function TournamentView({
         };
       })
       .sort((a, b) => new Date(a.date) - new Date(b.date));
-  }, [matches, tournamentName]);
+  }, [matches, tournamentName, teamInfo?.id]);
 
   const groupMatches = useMemo(() => {
     return tournamentMatches.filter((m) => m.tournamentStage !== 'Knockout Stage');
@@ -259,7 +276,7 @@ export default function TournamentView({
       }
     } catch (err) {
       console.error('Failed to create tournament match:', err);
-      alert(`Error creating tournament match: ${err.message}`);
+      showWarningDialog('Match Creation Failed', `Error creating tournament match: ${err.message}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -304,12 +321,12 @@ export default function TournamentView({
     const { error } = await supabase.from('matches').delete().eq('id', matchId);
     if (error) {
       console.error('Match delete error:', error);
-      alert(`Failed to delete match: ${error.message}`);
+      showWarningDialog('Match Deletion Error', `Failed to delete match: ${error.message}`);
     }
   };
 
   const executeFinishTournament = async () => {
-    setTournamentFinishedStatus(tournamentName, true);
+    setTournamentFinishedStatus(tournamentName, true, teamInfo?.id);
     setIsFinished(true);
 
     const activeMatchIds = tournamentMatches.filter((m) => m.status !== 'finished').map((m) => m.id);
@@ -322,7 +339,7 @@ export default function TournamentView({
   };
 
   const handleReopenTournament = () => {
-    setTournamentFinishedStatus(tournamentName, false);
+    setTournamentFinishedStatus(tournamentName, false, teamInfo?.id);
     setIsFinished(false);
   };
 
@@ -1246,7 +1263,7 @@ export default function TournamentView({
                 className="btn btn-primary"
                 disabled={editTourneySquadSelection.length === 0}
                 onClick={() => {
-                  setTournamentAvailablePlayers(tournamentName, editTourneySquadSelection);
+                  setTournamentAvailablePlayers(tournamentName, editTourneySquadSelection, teamInfo?.id);
                   setTournamentAvailableIds(editTourneySquadSelection);
                   setShowEditSquadModal(false);
                 }}
@@ -1257,6 +1274,9 @@ export default function TournamentView({
           </div>
         </div>
       )}
+
+      {/* In-app Warning and Confirmation Dialog */}
+      <ConfirmDialog {...dialogConfig} />
     </div>
   );
 }

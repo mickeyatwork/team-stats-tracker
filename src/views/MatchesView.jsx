@@ -47,8 +47,8 @@ export default function MatchesView({
 
   // Grouped Tournaments
   const tournaments = useMemo(() => {
-    return groupMatchesByTournament(matches);
-  }, [matches, tournamentsVersion]);
+    return groupMatchesByTournament(matches, teamInfo?.id);
+  }, [matches, tournamentsVersion, teamInfo?.id]);
 
   // Regular (Non-tournament) matches
   const regularMatches = useMemo(() => {
@@ -182,10 +182,15 @@ export default function MatchesView({
     e.preventDefault();
     if (!newTourneyName.trim() || newTourneySquadSelection.length === 0) return;
     const name = newTourneyName.trim();
-    saveTournament(name, {
-      match_variant: getDefaultMatchVariant(),
-      available_players: newTourneySquadSelection
-    });
+    saveTournament(
+      name,
+      {
+        match_variant: getDefaultMatchVariant(),
+        available_players: newTourneySquadSelection,
+        team_id: teamInfo?.id
+      },
+      teamInfo?.id
+    );
     setTournamentsVersion((v) => v + 1);
     setShowNewTournamentModal(false);
     setNewTourneyName('');
@@ -201,8 +206,8 @@ export default function MatchesView({
 
     const matchIds = tourney.matches.map((m) => m.id);
     setMatches((prev) => prev.filter((m) => !matchIds.includes(m.id)));
-    setTournamentFinishedStatus(tourney.name, false);
-    removeSavedTournament(tourney.name);
+    setTournamentFinishedStatus(tourney.name, false, teamInfo?.id);
+    removeSavedTournament(tourney.name, teamInfo?.id);
     setTournamentsVersion((v) => v + 1);
 
     for (const mid of matchIds) {

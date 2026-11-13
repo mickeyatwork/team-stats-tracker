@@ -1,5 +1,5 @@
-import { Users, Calendar, Settings as SettingsIcon, X, BarChart3, ChevronDown, Plus, Shield, WifiOff, RefreshCw } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Users, Calendar, Settings as SettingsIcon, X, BarChart3, ChevronDown, Plus, Shield, WifiOff, RefreshCw, Check } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
 import { hasAdminPrivileges } from '../utils/authRoles';
 import { getOfflineSyncState, subscribeOfflineSync, flushOfflineSyncQueue } from '../utils/offlineSync';
 import { supabase } from '../supabaseClient';
@@ -24,6 +24,23 @@ export default function TopNav({
   const [offlineState, setOfflineState] = useState(getOfflineSyncState);
   const canAddTeam = hasAdminPrivileges(currentUserProfile);
   const activeClub = allClubs.find((c) => c.id === teamInfo?.club_id);
+
+  const groupedTeams = useMemo(() => {
+    const map = new Map();
+    (allTeams || []).forEach((t) => {
+      const key = `${t.club_id || ''}:::${(t.name || '').trim().toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          name: (t.name || '').trim(),
+          clubId: t.club_id,
+          seasons: []
+        });
+      }
+      map.get(key).seasons.push(t);
+    });
+    return Array.from(map.values());
+  }, [allTeams]);
 
   useEffect(() => {
     return subscribeOfflineSync((nextState) => {
@@ -76,14 +93,32 @@ export default function TopNav({
                   onClick={() => setShowTeamMenu(!showTeamMenu)}
                   className="team-switcher-btn"
                   title="Switch Team / Season"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.2rem 0.6rem', fontSize: '0.75rem' }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.25rem 0.65rem',
+                    fontSize: '0.75rem',
+                    maxWidth: '240px'
+                  }}
                 >
-                  <span>
-                    {seasonScope === 'ALL_TIME'
-                      ? 'All Time (All Seasons)'
-                      : (teamInfo.season || 'Active')}
+                  <span
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem'
+                    }}
+                  >
+                    <span style={{ fontWeight: 700 }}>{teamInfo.name}</span>
+                    <span style={{ opacity: 0.55 }}>•</span>
+                    <span style={{ fontWeight: 500 }}>
+                      {seasonScope === 'ALL_TIME' ? 'All Seasons' : (teamInfo.season || 'Active')}
+                    </span>
                   </span>
-                  <ChevronDown size={13} />
+                  <ChevronDown size={13} style={{ flexShrink: 0 }} />
                 </button>
 
                 {showTeamMenu && (
@@ -92,47 +127,125 @@ export default function TopNav({
                       className="dropdown-backdrop"
                       onClick={() => setShowTeamMenu(false)}
                     />
-                    <div className="dropdown-menu">
+                    <div className="dropdown-menu" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
                       <div className="dropdown-header">
-                        {activeClub ? `${activeClub.name} • Seasons` : 'Switch Team / Season'}
+                        {activeClub ? `${activeClub.name} • Teams & Seasons` : 'Teams & Seasons'}
                       </div>
 
-                      {onSelectSeasonScope && allTeams.length > 1 && (
-                        <>
-                          <button
-                            className={`dropdown-item ${seasonScope === 'ALL_TIME' ? 'active' : ''}`}
-                            onClick={() => {
-                              onSelectSeasonScope('ALL_TIME');
-                              setShowTeamMenu(false);
-                            }}
-                          >
-                            <span className="dropdown-item-title">All Time (All Seasons)</span>
-                            <span className="dropdown-item-subtitle">
-                              Combined stats across all {allTeams.length} seasons
-                            </span>
-                          </button>
-                          <div className="dropdown-divider" />
-                        </>
-                      )}
+                      {groupedTeams.map((group, groupIdx) => {
+                        const isCurrentTeam = group.seasons.some((s) => s.id === teamInfo?.id);
+                        const tClub = allClubs.find((c) => c.id === group.clubId);
 
-                      {allTeams.map((t) => {
-                        const tClub = allClubs.find((c) => c.id === t.club_id);
-                        const isActiveSeason = t.id === teamInfo.id && seasonScope !== 'ALL_TIME';
                         return (
-                          <button
-                            key={t.id}
-                            className={`dropdown-item ${isActiveSeason ? 'active' : ''}`}
-                            onClick={() => {
-                              if (onSelectSeasonScope) onSelectSeasonScope('CURRENT');
-                              if (onSelectTeam) onSelectTeam(t);
-                              setShowTeamMenu(false);
-                            }}
-                          >
-                            <span className="dropdown-item-title">{t.name}</span>
-                            <span className="dropdown-item-subtitle">
-                              {t.season} {tClub && tClub.id !== activeClub?.id ? `• ${tClub.name}` : ''}
-                            </span>
-                          </button>
+                          <div key={group.key} className="dropdown-team-group" style={{ marginBottom: '0.4rem' }}>
+                            {groupIdx > 0 && <div className="dropdown-divider" style={{ margin: '0.35rem 0' }} />}
+                            
+                            <div
+                              style={{
+                                padding: '0.35rem 0.85rem 0.25rem 0.85rem',
+                                fontSize: '0.7rem',
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.04em',
+                                color: isCurrentTeam ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                background: isCurrentTeam ? 'rgba(2, 132, 199, 0.05)' : 'transparent'
+                              }}
+                            >
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <Shield size={12} />
+                                {group.name}
+                              </span>
+                              {tClub && (
+                                <span style={{ fontSize: '0.65rem', fontWeight: 500, color: 'var(--color-text-muted)', textTransform: 'none' }}>
+                                  {tClub.name}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="dropdown-team-seasons">
+                              {group.seasons.map((s) => {
+                                const isActive = s.id === teamInfo.id && seasonScope !== 'ALL_TIME';
+                                return (
+                                  <button
+                                    key={s.id}
+                                    className={`dropdown-item ${isActive ? 'active' : ''}`}
+                                    onClick={() => {
+                                      if (onSelectSeasonScope) onSelectSeasonScope('CURRENT');
+                                      if (onSelectTeam) onSelectTeam(s);
+                                      setShowTeamMenu(false);
+                                    }}
+                                    style={{ paddingLeft: '1.25rem' }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '0.5rem' }}>
+                                      <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                          <span className="dropdown-item-title" style={{ fontWeight: isActive ? 700 : 500 }}>
+                                            {s.season || 'Active Season'}
+                                          </span>
+                                          {s.league && (
+                                            <span
+                                              className="badge"
+                                              style={{
+                                                fontSize: '0.65rem',
+                                                padding: '0.1rem 0.4rem',
+                                                background: isActive ? 'var(--color-primary-light)' : 'var(--color-border-light)',
+                                                color: isActive ? 'var(--color-primary-dark)' : 'var(--color-text-main)',
+                                                fontWeight: 600,
+                                                border: '1px solid var(--color-border)'
+                                              }}
+                                            >
+                                              {s.league}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {s.timeframe && (
+                                          <span className="dropdown-item-subtitle" style={{ display: 'block', fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: '0.15rem' }}>
+                                            {s.timeframe}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {isActive && (
+                                        <span className="badge badge-primary flex-row gap-1" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', flexShrink: 0 }}>
+                                          <Check size={10} /> Active
+                                        </span>
+                                      )}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+
+                              {/* All Time option scoped to this team */}
+                              {group.seasons.length > 1 && isCurrentTeam && onSelectSeasonScope && (
+                                <button
+                                  className={`dropdown-item ${seasonScope === 'ALL_TIME' ? 'active' : ''}`}
+                                  onClick={() => {
+                                    onSelectSeasonScope('ALL_TIME');
+                                    setShowTeamMenu(false);
+                                  }}
+                                  style={{ paddingLeft: '1.25rem' }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '0.5rem' }}>
+                                    <div>
+                                      <span className="dropdown-item-title" style={{ fontWeight: seasonScope === 'ALL_TIME' ? 700 : 500 }}>
+                                        All Time (All {group.seasons.length} Seasons)
+                                      </span>
+                                      <span className="dropdown-item-subtitle" style={{ display: 'block', fontSize: '0.68rem' }}>
+                                        Combined stats for {group.name}
+                                      </span>
+                                    </div>
+                                    {seasonScope === 'ALL_TIME' && (
+                                      <span className="badge badge-primary flex-row gap-1" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }}>
+                                        <Check size={10} /> Active
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
 
