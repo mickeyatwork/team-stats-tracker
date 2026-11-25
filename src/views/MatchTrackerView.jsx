@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star } from 'lucide-react';
+import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star, Pin } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import { supabase } from '../supabaseClient';
 import {
@@ -10,7 +10,7 @@ import {
   saveLocalTimelineEvents
 } from '../utils/timelineUtils';
 import { parseTournament, getTournamentAvailablePlayers } from '../utils/tournamentUtils';
-import { FEATURE_KEYS, isFeatureEnabled } from '../utils/featureFlags';
+import { FEATURE_KEYS, isFeatureEnabled, getDCHistoryMatches } from '../utils/featureFlags';
 import {
   DEFAULT_COLUMN_ORDER,
   getTrackerColumnOrder,
@@ -18,7 +18,10 @@ import {
   getSavedMatchRoles,
   saveMatchRoleSelection,
   saveUserPreferences,
-  subscribeToUserPreferences
+  subscribeToUserPreferences,
+  getDCPinnedPlayers,
+  saveDCPinnedPlayers,
+  getDCSortMode
 } from '../utils/userPreferences';
 import {
   queueOfflineMatchSnapshot,
@@ -64,6 +67,10 @@ export default function MatchTrackerView({
   const [showPotmDialog, setShowPotmDialog] = useState(false);
   const [showDCDialog, setShowDCDialog] = useState(false);
   const [justTappedDCId, setJustTappedDCId] = useState(null);
+  const [dcSortMode, setDcSortMode] = useState(() => getDCSortMode());
+  const [dcPinnedIds, setDcPinnedIds] = useState(() => getDCPinnedPlayers(teamInfo));
+  const [dcOrderSnapshot, setDcOrderSnapshot] = useState([]);
+  const [dcPinEditMode, setDcPinEditMode] = useState(false);
   const [columnOrder, setColumnOrder] = useState(() => getTrackerColumnOrder(teamInfo));
   const [hiddenColumns, setHiddenColumns] = useState(() => getTrackerHiddenColumns(teamInfo));
   const [showColumnOrderModal, setShowColumnOrderModal] = useState(false);
@@ -78,9 +85,13 @@ export default function MatchTrackerView({
   useEffect(() => {
     setColumnOrder(getTrackerColumnOrder(teamInfo));
     setHiddenColumns(getTrackerHiddenColumns(teamInfo));
+    setDcPinnedIds(getDCPinnedPlayers(teamInfo));
+    setDcSortMode(getDCSortMode());
     return subscribeToUserPreferences(() => {
       setColumnOrder(getTrackerColumnOrder(teamInfo));
       setHiddenColumns(getTrackerHiddenColumns(teamInfo));
+      setDcPinnedIds(getDCPinnedPlayers(teamInfo));
+      setDcSortMode(getDCSortMode());
     });
   }, [teamInfo?.id]);
 
@@ -1119,6 +1130,106 @@ export default function MatchTrackerView({
   const totalAttempts = playersInMatch.reduce((sum, p) => sum + p.attempts, 0);
   const totalDC = playersInMatch.reduce((sum, p) => sum + p.defensive_contributions, 0);
 
+  // ---------- DC Quick Record ordering ----------
+  // Average DCs per appearance over the team's last N previous matches in which DCs were tracked.
+  const getHistoricalDCAverages = () => {
+    const limit = getDCHistoryMatches(teamInfo);
+    const activeDate = activeMatch.date || '';
+    const history = (matches || [])
+      .filter((m) => {
+        if (!m || m.id === activeMatch.id || !m.stats) return false;
+        if (activeDate && m.date && m.date > activeDate) return false;
+        const statRows = Object.values(m.stats);
+        // Skip matches where DCs were not being tracked (no DCs recorded at all)
+        return statRows.some((s) => (s?.defensive_contributions || 0) > 0);
+      })
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      .slice(0, limit);
+
+    const agg = {};
+    history.forEach((m) => {
+      Object.entries(m.stats).forEach(([pid, s]) => {
+        if (!agg[pid]) agg[pid] = { dc: 0, apps: 0 };
+        agg[pid].dc += s?.defensive_contributions || 0;
+        agg[pid].apps += 1;
+      });
+    });
+    const averages = {};
+    Object.entries(agg).forEach(([pid, { dc, apps }]) => {
+      averages[pid] = apps > 0 ? dc / apps : 0;
+    });
+    return averages;
+  };
+
+  const POSITION_RANK = { GK: 0, DEF: 1, MID: 2, FW: 3 };
+
+  const computeDCOrder = (mode, pinnedIds) => {
+    const pinnedSet = new Set(pinnedIds.map(String));
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    let comparator = byName;
+
+    if (mode === 'position') {
+      comparator = (a, b) =>
+        (POSITION_RANK[a.position] ?? 9) - (POSITION_RANK[b.position] ?? 9) || byName(a, b);
+    } else if (mode === 'smart') {
+      const averages = getHistoricalDCAverages();
+      const score = (p) => p.defensive_contributions * 2 + (averages[p.id] || 0);
+      comparator = (a, b) => score(b) - score(a) || byName(a, b);
+    }
+
+    const pinned = playersInMatch.filter((p) => pinnedSet.has(String(p.id))).sort(byName);
+    const rest = playersInMatch.filter((p) => !pinnedSet.has(String(p.id))).sort(comparator);
+    return [...pinned, ...rest].map((p) => p.id);
+  };
+
+  // Order is computed once on open using the user's saved default and frozen while
+  // the dialog is open, so tiles never jump under the user's finger after a tap.
+  const openDCDialog = () => {
+    const defaultMode = getDCSortMode();
+    setDcSortMode(defaultMode);
+    setDcOrderSnapshot(computeDCOrder(defaultMode, dcPinnedIds));
+    setDcPinEditMode(false);
+    setShowDCDialog(true);
+  };
+
+  const closeDCDialog = () => {
+    setShowDCDialog(false);
+    setDcPinEditMode(false);
+  };
+
+  const changeDCSortMode = (mode) => {
+    setDcSortMode(mode);
+    setDcOrderSnapshot(computeDCOrder(mode, dcPinnedIds));
+  };
+
+  const toggleDCPin = (playerId) => {
+    const id = String(playerId);
+    const next = dcPinnedIds.includes(id) ? dcPinnedIds.filter((p) => p !== id) : [...dcPinnedIds, id];
+    setDcPinnedIds(next);
+    saveDCPinnedPlayers(teamInfo, next);
+    setDcOrderSnapshot(computeDCOrder(dcSortMode, next));
+  };
+
+  const recordDC = (playerId) => {
+    updateMatchStat(activeMatch.id, playerId, 'defensive_contributions', 1);
+    setJustTappedDCId(playerId);
+    setTimeout(() => setJustTappedDCId((curr) => (curr === playerId ? null : curr)), 350);
+  };
+
+  const dcOrderedPlayers = (() => {
+    const byId = new Map(playersInMatch.map((p) => [p.id, p]));
+    const ordered = dcOrderSnapshot.map((id) => byId.get(id)).filter(Boolean);
+    // Players added to the squad while the dialog is open go to the end
+    const seen = new Set(dcOrderSnapshot);
+    playersInMatch.forEach((p) => {
+      if (!seen.has(p.id)) ordered.push(p);
+    });
+    return ordered;
+  })();
+  const dcPinnedSet = new Set(dcPinnedIds);
+  const dcPinnedPlayers = dcOrderedPlayers.filter((p) => dcPinnedSet.has(String(p.id)));
+  const dcOtherPlayers = dcOrderedPlayers.filter((p) => !dcPinnedSet.has(String(p.id)));
+
   const columnDefs = {
     goals: {
       key: 'goals',
@@ -1534,7 +1645,7 @@ export default function MatchTrackerView({
           {showDC && (
             <button
               type="button"
-              onClick={() => setShowDCDialog(true)}
+              onClick={openDCDialog}
               className="btn-action-tracker btn-action-dc"
               title="Quickly record defensive contributions"
             >
@@ -2474,109 +2585,147 @@ export default function MatchTrackerView({
         )}
 
         {/* Quick Record Defensive Contributions Modal */}
-        {showDCDialog && (
-          <div className="modal-overlay" onClick={() => setShowDCDialog(false)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
-              <div className="flex-between mb-3">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div style={{
-                    width: '2.25rem',
-                    height: '2.25rem',
-                    borderRadius: 'var(--radius-lg)',
-                    backgroundColor: 'rgba(8, 145, 178, 0.15)',
-                    color: '#0891b2',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}>
-                    <ShieldCheck size={20} />
-                  </div>
-                  <div>
-                    <h3 className="title-md" style={{ marginBottom: 0 }}>Record Defensive Contribution</h3>
-                    <span style={{ fontSize: '0.75rem', color: '#0891b2', fontWeight: 700 }}>
-                      Match Total: {totalDC}
+        {showDCDialog && (() => {
+          const renderDCTile = (player) => {
+            const isJustTapped = justTappedDCId === player.id;
+            const isPinned = dcPinnedSet.has(String(player.id));
+            return (
+              <div
+                key={player.id}
+                role="button"
+                tabIndex={0}
+                className={`dc-tap-tile ${isJustTapped ? 'just-tapped' : ''} ${dcPinEditMode ? 'pin-edit' : ''} ${dcPinEditMode && isPinned ? 'pinned' : ''}`}
+                onClick={() => (dcPinEditMode ? toggleDCPin(player.id) : recordDC(player.id))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (dcPinEditMode) toggleDCPin(player.id);
+                    else recordDC(player.id);
+                  }
+                }}
+                title={dcPinEditMode ? (isPinned ? `Unpin ${player.name}` : `Pin ${player.name}`) : `Add DC for ${player.name}`}
+                aria-label={dcPinEditMode ? (isPinned ? `Unpin ${player.name}` : `Pin ${player.name}`) : `Add DC for ${player.name}`}
+              >
+                <div className="dc-tap-tile-name">{player.name}</div>
+                <div className="dc-tap-tile-footer">
+                  <span className="dc-tap-tile-pos">
+                    {!teamInfo.hide_positions && player.position ? player.position : ''}
+                  </span>
+                  {dcPinEditMode ? (
+                    <span className="dc-tap-tile-pin">
+                      <Pin size={14} fill={isPinned ? 'currentColor' : 'none'} />
                     </span>
-                  </div>
-                </div>
-                <button onClick={() => setShowDCDialog(false)} className="btn-icon">
-                  <X size={20} />
-                </button>
-              </div>
-
-              <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Tap any player to instantly record a defensive contribution (tackle, interception, block, or clearance).
-              </p>
-
-              <div style={{ maxHeight: '60vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.2rem' }}>
-                {playersInMatch.map((player) => {
-                  const isJustTapped = justTappedDCId === player.id;
-                  return (
-                    <div
-                      key={player.id}
-                      className={`dc-player-tap-card ${isJustTapped ? 'just-tapped' : ''}`}
-                    >
-                      <div
-                        className="dc-player-tap-main"
-                        onClick={() => {
-                          updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', 1);
-                          setJustTappedDCId(player.id);
-                          setTimeout(() => setJustTappedDCId((curr) => (curr === player.id ? null : curr)), 350);
-                        }}
-                      >
-                        <div
-                          className="avatar"
-                          style={{
-                            backgroundColor: isJustTapped ? '#0891b2' : 'var(--color-border-light)',
-                            color: isJustTapped ? '#ffffff' : 'var(--color-text-main)',
-                            fontWeight: 700,
-                            fontSize: '0.9rem',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          {player.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text-main)' }}>
-                            {player.name}
-                          </div>
-                          {!teamInfo.hide_positions && player.position && (
-                            <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                              {player.position}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="dc-counter-badge" title="Total Defensive Contributions">
-                          <ShieldCheck size={13} />
-                          <span>{player.defensive_contributions}</span>
-                        </div>
-                      </div>
-
-                      <div className="dc-player-tap-actions">
+                  ) : (
+                    <div className="dc-tap-tile-controls">
+                      <span className="dc-tile-count" title="Defensive Contributions this match">
+                        {player.defensive_contributions}
+                      </span>
+                      {player.defensive_contributions > 0 && (
                         <button
                           type="button"
-                          onClick={() => updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1)}
-                          disabled={player.defensive_contributions === 0}
-                          className="btn-dc-tap-minus"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1);
+                          }}
+                          className="btn-dc-tile-minus"
                           title={`Decrease DC for ${player.name}`}
                           aria-label={`Decrease DC for ${player.name}`}
-                          style={{ opacity: player.defensive_contributions === 0 ? 0.35 : 1 }}
                         >
-                          -
+                          −
                         </button>
-                      </div>
+                      )}
                     </div>
-                  );
-                })}
+                  )}
+                </div>
               </div>
+            );
+          };
 
-              <button onClick={() => setShowDCDialog(false)} className="btn btn-primary mt-4" style={{ width: '100%' }}>
-                Done
-              </button>
+          return (
+            <div className="modal-overlay" onClick={closeDCDialog}>
+              <div className="modal-content dc-quick-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="flex-between mb-2">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                    <div style={{
+                      width: '2rem',
+                      height: '2rem',
+                      borderRadius: 'var(--radius-lg)',
+                      backgroundColor: 'rgba(8, 145, 178, 0.15)',
+                      color: '#0891b2',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <ShieldCheck size={18} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <h3 className="title-md" style={{ marginBottom: 0 }} title="Tap a player to record a tackle, interception, block, or clearance">
+                        Record DC
+                      </h3>
+                      <span style={{ fontSize: '0.75rem', color: '#0891b2', fontWeight: 700 }}>
+                        Match Total: {totalDC}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => setDcPinEditMode((v) => !v)}
+                      className={`btn-icon dc-pin-mode-btn ${dcPinEditMode ? 'active' : ''}`}
+                      title={dcPinEditMode ? 'Finish editing pinned players' : 'Edit pinned players'}
+                      aria-pressed={dcPinEditMode}
+                    >
+                      <Pin size={18} />
+                    </button>
+                    <button onClick={closeDCDialog} className="btn-icon" aria-label="Close">
+                      <X size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="dc-sort-toggle" role="group" aria-label="Player order">
+                  {[
+                    { id: 'smart', label: 'Smart' },
+                    { id: 'alpha', label: 'A–Z' },
+                    { id: 'position', label: 'Position' }
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={dcSortMode === opt.id ? 'active' : ''}
+                      onClick={() => changeDCSortMode(opt.id)}
+                      aria-pressed={dcSortMode === opt.id}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {dcPinEditMode && (
+                  <div className="dc-pin-hint">
+                    Tap players to pin/unpin them to the top. Tap the pin icon again when done.
+                  </div>
+                )}
+
+                <div className="dc-tap-scroll">
+                  {dcPinnedPlayers.length > 0 && (
+                    <>
+                      <div className="dc-section-label"><Pin size={11} /> Pinned</div>
+                      <div className="dc-tap-grid">{dcPinnedPlayers.map(renderDCTile)}</div>
+                      {dcOtherPlayers.length > 0 && <div className="dc-section-label">Squad</div>}
+                    </>
+                  )}
+                  <div className="dc-tap-grid">{dcOtherPlayers.map(renderDCTile)}</div>
+                </div>
+
+                <button onClick={closeDCDialog} className="btn btn-primary mt-3" style={{ width: '100%' }}>
+                  Done
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Column Order Preferences Modal */}
         {showColumnOrderModal && (
