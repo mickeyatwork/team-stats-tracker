@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star, Pin } from 'lucide-react';
 import TopNav from '../components/TopNav';
+import PitchShotMap from '../components/PitchShotMap';
 import { supabase } from '../supabaseClient';
 import {
   computeTimelineWithScores,
@@ -58,6 +59,8 @@ export default function MatchTrackerView({
   const [showAmendSquad, setShowAmendSquad] = useState(false);
   const [assistModalScorer, setAssistModalScorer] = useState(null);
   const [attemptModalPlayer, setAttemptModalPlayer] = useState(null);
+  const [shotModal, setShotModal] = useState(null); // { step: 'pitch'|'player'|'outcome', location: {x,y}|null, playerId: string|null, fromPlayerRow: boolean }
+  const [pendingGoalLocation, setPendingGoalLocation] = useState(null);
   const [playerToRemove, setPlayerToRemove] = useState(null); // { id, name }
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('matchTrackerViewMode') || 'table';
@@ -78,6 +81,7 @@ export default function MatchTrackerView({
   const [dragOverColKey, setDragOverColKey] = useState(null);
 
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
+  const showShotPitchMap = showAttempts && isFeatureEnabled(teamInfo, FEATURE_KEYS.SHOT_PITCH_MAP);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
   const showPotm = isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH);
   const showCaptain = isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN);
@@ -465,28 +469,43 @@ export default function MatchTrackerView({
   };
 
   const handleAttemptClick = (playerId) => {
-    setAttemptModalPlayer(playerId);
+    if (showShotPitchMap) {
+      setShotModal({ step: 'pitch', location: null, playerId, fromPlayerRow: true });
+    } else {
+      setAttemptModalPlayer(playerId);
+    }
   };
 
-  const handleAttemptResult = async (result) => {
-    const playerId = attemptModalPlayer;
+  const openShotDialog = () => {
+    setShotModal({ step: 'pitch', location: null, playerId: null, fromPlayerRow: false });
+  };
+
+  const recordAttemptOutcome = async (playerId, result, location = null) => {
     if (!playerId) return;
 
     if (result === 'scored') {
+      setPendingGoalLocation(location);
       setAttemptModalPlayer(null);
+      setShotModal(null);
       setAssistModalScorer(playerId);
     } else {
       updateMatchStat(activeMatch.id, playerId, 'attempts', 1);
       setAttemptModalPlayer(null);
+      setShotModal(null);
 
       // Persist to attempt_events table
       try {
-        const { data, error } = await supabase.from('attempt_events').insert([{
+        const payload = {
           match_id: activeMatch.id,
           player_id: playerId,
           result: result,
           created_at: new Date().toISOString()
-        }]).select().single();
+        };
+        if (location) {
+          payload.pitch_x = location.x;
+          payload.pitch_y = location.y;
+        }
+        const { data, error } = await supabase.from('attempt_events').insert([payload]).select().single();
         if (!error && data) {
           setAttemptEvents((prev) => [...prev, data]);
         }
@@ -494,6 +513,15 @@ export default function MatchTrackerView({
         console.warn('Could not insert attempt_event:', err);
       }
     }
+  };
+
+  const handleAttemptResult = async (result) => {
+    await recordAttemptOutcome(attemptModalPlayer, result, null);
+  };
+
+  const handleShotModalOutcome = async (result) => {
+    if (!shotModal?.playerId) return;
+    await recordAttemptOutcome(shotModal.playerId, result, shotModal.location);
   };
 
   const handleAttemptDecrement = async (playerId) => {
@@ -527,7 +555,9 @@ export default function MatchTrackerView({
 
   const processGoalWithAssist = async (assisterId) => {
     const scorerId = assistModalScorer;
+    const shotLoc = pendingGoalLocation;
     setAssistModalScorer(null);
+    setPendingGoalLocation(null);
 
     // Get current state to ensure we have the latest values for DB
     const m = matches.find((x) => x.id === activeMatch.id);
@@ -642,12 +672,17 @@ export default function MatchTrackerView({
     // Also log to attempt_events as scored if attempts tracking is enabled
     if (showAttempts) {
       try {
-        const { data: attemptEvt } = await supabase.from('attempt_events').insert([{
+        const attemptPayload = {
           match_id: activeMatch.id,
           player_id: scorerId,
           result: 'scored',
           created_at: new Date().toISOString()
-        }]).select().single();
+        };
+        if (shotLoc) {
+          attemptPayload.pitch_x = shotLoc.x;
+          attemptPayload.pitch_y = shotLoc.y;
+        }
+        const { data: attemptEvt } = await supabase.from('attempt_events').insert([attemptPayload]).select().single();
         if (attemptEvt) {
           setAttemptEvents((prev) => [...prev, attemptEvt]);
         }
@@ -1653,6 +1688,18 @@ export default function MatchTrackerView({
               {totalDC > 0 && <span className="btn-action-badge dc">{totalDC}</span>}
             </button>
           )}
+
+          {showShotPitchMap && (
+            <button
+              type="button"
+              onClick={openShotDialog}
+              className="btn-action-tracker btn-action-shot"
+              title="Mark shot location on pitch and record attempt"
+            >
+              <span className="btn-action-title">Record Shot</span>
+              {totalAttempts > 0 && <span className="btn-action-badge shot">{totalAttempts}</span>}
+            </button>
+          )}
         </div>
 
         {/* Matchday Squad Header */}
@@ -2033,6 +2080,186 @@ export default function MatchTrackerView({
           </div>
         )}
 
+        {/* Shot Pitch Map Modal */}
+        {shotModal && (
+          <div className="modal-overlay" onClick={() => setShotModal(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+              <div className="flex-between mb-3">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    width: '2rem',
+                    height: '2rem',
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'rgba(234, 88, 12, 0.15)',
+                    color: '#ea580c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <Crosshair size={18} />
+                  </div>
+                  <div>
+                    <h3 className="title-md" style={{ marginBottom: 0 }}>Record Shot</h3>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                      {shotModal.playerId
+                        ? playersInMatch.find((p) => p.id === shotModal.playerId)?.name
+                        : 'Mark pitch, pick player, choose outcome'}
+                    </span>
+                  </div>
+                </div>
+                <button onClick={() => setShotModal(null)} className="btn-icon" aria-label="Close">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Stepper */}
+              <div className="shot-stepper">
+                <span className={shotModal.step === 'pitch' ? 'active' : 'done'}>1. Pitch</span>
+                {!shotModal.fromPlayerRow && (
+                  <span className={shotModal.step === 'player' ? 'active' : shotModal.step === 'outcome' ? 'done' : ''}>
+                    2. Player
+                  </span>
+                )}
+                <span className={shotModal.step === 'outcome' ? 'active' : ''}>
+                  {shotModal.fromPlayerRow ? '2. Outcome' : '3. Outcome'}
+                </span>
+              </div>
+
+              {shotModal.step === 'pitch' && (
+                <div>
+                  <PitchShotMap
+                    value={shotModal.location}
+                    onChange={(loc) =>
+                      setShotModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              location: loc,
+                              step: prev.fromPlayerRow ? 'outcome' : 'player'
+                            }
+                          : prev
+                      )
+                    }
+                    existingShots={_attemptEvents}
+                  />
+                  <div style={{ marginTop: '0.9rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ width: '100%' }}
+                      onClick={() =>
+                        setShotModal((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                location: null,
+                                step: prev.fromPlayerRow ? 'outcome' : 'player'
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      Skip Location
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {shotModal.step === 'player' && (
+                <div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                    Who took the shot?
+                  </p>
+                  <div className="shot-player-grid">
+                    {playersInMatch.map((player) => (
+                      <button
+                        key={player.id}
+                        type="button"
+                        className={`shot-player-tile ${shotModal.playerId === player.id ? 'selected' : ''}`}
+                        onClick={() =>
+                          setShotModal((prev) =>
+                            prev ? { ...prev, playerId: player.id, step: 'outcome' } : prev
+                          )
+                        }
+                      >
+                        <div className="avatar" style={{ width: '1.85rem', height: '1.85rem', fontSize: '0.8rem', flexShrink: 0 }}>
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="shot-player-name">{player.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.65rem', marginTop: '0.9rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ width: '100%' }}
+                      onClick={() =>
+                        setShotModal((prev) => (prev ? { ...prev, step: 'pitch' } : prev))
+                      }
+                    >
+                      Back to Pitch
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {shotModal.step === 'outcome' && (
+                <div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '0.85rem' }}>
+                    What was the outcome of this shot?
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    <div onClick={() => handleShotModalOutcome('scored')} className="attempt-choice-card scored">
+                      <div className="attempt-choice-icon scored">⚽</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title scored">Scored (Goal)</span>
+                        <span className="attempt-choice-desc">Logs goal, adds attempt, and assigns assist</span>
+                      </div>
+                    </div>
+                    <div onClick={() => handleShotModalOutcome('saved')} className="attempt-choice-card saved">
+                      <div className="attempt-choice-icon saved">🧤</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title saved">Saved</span>
+                        <span className="attempt-choice-desc">Shot on target saved by opposition goalkeeper</span>
+                      </div>
+                    </div>
+                    <div onClick={() => handleShotModalOutcome('missed')} className="attempt-choice-card missed">
+                      <div className="attempt-choice-icon missed">❌</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title missed">Missed (Off Target)</span>
+                        <span className="attempt-choice-desc">Shot wide or over the crossbar</span>
+                      </div>
+                    </div>
+                    <div onClick={() => handleShotModalOutcome('blocked')} className="attempt-choice-card blocked">
+                      <div className="attempt-choice-icon blocked">🛡️</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title blocked">Blocked</span>
+                        <span className="attempt-choice-desc">Shot blocked by an outfield defender</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary mt-3"
+                    style={{ width: '100%' }}
+                    onClick={() =>
+                      setShotModal((prev) =>
+                        prev
+                          ? { ...prev, step: prev.fromPlayerRow ? 'pitch' : 'player' }
+                          : prev
+                      )
+                    }
+                  >
+                    {shotModal.fromPlayerRow ? 'Back to Pitch' : 'Back to Player'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Attempt Result Modal */}
         {attemptModalPlayer && (
           <div className="modal-overlay" onClick={() => setAttemptModalPlayer(null)}>
@@ -2141,7 +2368,7 @@ export default function MatchTrackerView({
                 <h3 className="title-md" style={{ marginBottom: 0 }}>
                   Who assisted {playersInMatch.find(p => p.id === assistModalScorer)?.name}?
                 </h3>
-                <button onClick={() => setAssistModalScorer(null)} className="btn-icon">
+                <button onClick={() => { setAssistModalScorer(null); setPendingGoalLocation(null); }} className="btn-icon">
                   <X size={20} />
                 </button>
               </div>

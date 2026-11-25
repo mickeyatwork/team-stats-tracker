@@ -3651,6 +3651,207 @@ body {
   color: var(--color-primary-dark);
 }
 
+/* Record Shot Action Button */
+.btn-action-shot {
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25);
+}
+
+.btn-action-shot:hover {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35);
+}
+
+.btn-action-badge.shot {
+  background-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  font-weight: 800;
+}
+
+/* Shot Pitch Map Modal */
+.shot-stepper {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.shot-stepper span {
+  flex: 1;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-md);
+  background: var(--color-border-light);
+  color: var(--color-text-muted);
+}
+
+.shot-stepper span.active {
+  background: rgba(234, 88, 12, 0.15);
+  color: #ea580c;
+}
+
+.shot-stepper span.done {
+  background: rgba(34, 197, 94, 0.14);
+  color: #16a34a;
+}
+
+.pitch-map-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pitch-map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.pitch-view-toggle {
+  display: inline-flex;
+  background: var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: 0.18rem;
+  gap: 0.15rem;
+}
+
+.pitch-view-toggle button {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0.28rem 0.6rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pitch-view-toggle button.active {
+  background: var(--color-bg-card);
+  color: var(--color-text-main);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
+.pitch-coord-readout {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pitch-map-wrapper {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: #14532d;
+  display: flex;
+  justify-content: center;
+}
+
+.pitch-half-switch-bar {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-body);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.pitch-half-switch-bar:hover {
+  background: var(--color-border-light);
+  color: var(--color-text-main);
+}
+
+.pitch-map-wrapper.is-full .pitch-svg {
+  max-height: 330px;
+}
+
+.pitch-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: crosshair;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.pitch-legend {
+  display: flex;
+  justify-content: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  padding-top: 0.15rem;
+}
+
+.pitch-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.pitch-legend i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.shot-player-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.shot-player-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  color: var(--color-text-main);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.shot-player-tile:hover,
+.shot-player-tile.selected {
+  border-color: #ea580c;
+  background: rgba(234, 88, 12, 0.08);
+}
+
+.shot-player-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
 
 
 
