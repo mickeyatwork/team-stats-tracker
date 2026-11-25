@@ -988,11 +988,6 @@ export default function MatchesView({
                 <h2 className="title-md" style={{ marginBottom: '0.15rem' }}>
                   Fixtures
                 </h2>
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                  {teamInfo?.settings?.timeframe || teamInfo?.timeframe
-                    ? `Season Timeframe: ${teamInfo?.settings?.timeframe || teamInfo?.timeframe}`
-                    : 'No season timeframe set yet'}
-                </div>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button

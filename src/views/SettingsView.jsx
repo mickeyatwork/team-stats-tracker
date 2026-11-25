@@ -19,7 +19,8 @@ import {
   X,
   AlertCircle,
   CheckCircle2,
-  Upload
+  Upload,
+  ShieldCheck
 } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import UserManagementTab from '../components/UserManagementTab';
@@ -34,14 +35,17 @@ import {
   deleteTeamBadge
 } from '../utils/imageUtils';
 import { getDefaultMatchVariant, setDefaultMatchVariant, MATCH_VARIANTS } from '../utils/variantPreferences';
+import { getDCSortMode, saveDCSortMode, subscribeToUserPreferences } from '../utils/userPreferences';
 import {
   FEATURE_KEYS,
   isFeatureEnabled,
   setFeatureFlag,
   DEFAULT_PERFORMANCE_WEIGHTS,
   DEFAULT_MIN_FINISHER_ATTEMPTS,
+  DEFAULT_DC_HISTORY_MATCHES,
   getPerformanceWeights,
-  getMinFinisherAttempts
+  getMinFinisherAttempts,
+  getDCHistoryMatches
 } from '../utils/featureFlags';
 import { THEME_CONFIGS, getSavedTheme, applyTheme } from '../utils/themePreferences';
 import {
@@ -94,8 +98,10 @@ export default function SettingsView({
   const [playerOfTheMatchInput, setPlayerOfTheMatchInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH));
   const [captainInput, setCaptainInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN));
   const [minFinisherAttemptsInput, setMinFinisherAttemptsInput] = useState(() => getMinFinisherAttempts(teamInfo));
+  const [dcHistoryMatchesInput, setDcHistoryMatchesInput] = useState(() => getDCHistoryMatches(teamInfo));
   const [performanceWeightsInput, setPerformanceWeightsInput] = useState(() => getPerformanceWeights(teamInfo));
   const [defaultVariant, setDefaultVariant] = useState(getDefaultMatchVariant);
+  const [defaultDCSortMode, setDefaultDCSortMode] = useState(getDCSortMode);
   const [teamStatus, setTeamStatus] = useState({ loading: false, success: null, error: null });
 
   // Team Badge / Logo State
@@ -212,9 +218,16 @@ export default function SettingsView({
       setPlayerOfTheMatchInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH));
       setCaptainInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN));
       setMinFinisherAttemptsInput(getMinFinisherAttempts(teamInfo));
+      setDcHistoryMatchesInput(getDCHistoryMatches(teamInfo));
       setPerformanceWeightsInput(getPerformanceWeights(teamInfo));
     }
   }, [teamInfo]);
+
+  useEffect(() => {
+    return subscribeToUserPreferences(() => {
+      setDefaultDCSortMode(getDCSortMode());
+    });
+  }, []);
 
   // Detected match timeframe for active team
   const detectedActiveTimeframe = useMemo(() => {
@@ -292,6 +305,7 @@ export default function SettingsView({
         [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: playerOfTheMatchInput,
         [FEATURE_KEYS.CAPTAIN]: captainInput,
         min_finisher_attempts: Number(minFinisherAttemptsInput) || DEFAULT_MIN_FINISHER_ATTEMPTS,
+        dc_history_matches: Number(dcHistoryMatchesInput) || DEFAULT_DC_HISTORY_MATCHES,
         performance_weights: performanceWeightsInput
       };
 
@@ -337,6 +351,7 @@ export default function SettingsView({
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.CAPTAIN, captainInput);
       try {
         localStorage.setItem(`team_min_finisher_${teamInfo.id}`, String(minFinisherAttemptsInput));
+        localStorage.setItem(`team_dc_history_${teamInfo.id}`, String(dcHistoryMatchesInput));
         localStorage.setItem(`team_perf_weights_${teamInfo.id}`, JSON.stringify(performanceWeightsInput));
         if (cleanLeague) localStorage.setItem(`team_league_${teamInfo.id}`, cleanLeague);
         if (cleanTimeframe) localStorage.setItem(`team_timeframe_${teamInfo.id}`, cleanTimeframe);
@@ -955,6 +970,64 @@ export default function SettingsView({
               </div>
             </div>
 
+            {/* Default Defensive Contributions Order Preference */}
+            <div className="card mt-4">
+              <div className="flex-between mb-2">
+                <h2 className="title-md flex-row gap-2" style={{ margin: 0 }}>
+                  <ShieldCheck size={18} color="#0891b2" /> Default Defensive Contributions Order
+                </h2>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Choose the default player order used each time you open the Record Defensive Contributions dialog.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                {[
+                  { id: 'smart', label: 'Smart', desc: 'Pinned first, then by match & recent DC activity' },
+                  { id: 'alpha', label: 'A–Z', desc: 'Alphabetical order' },
+                  { id: 'position', label: 'Position', desc: 'Grouped by GK → DEF → MID → FW' }
+                ].map((opt) => {
+                  const isSelected = defaultDCSortMode === opt.id;
+                  return (
+                    <div
+                      key={opt.id}
+                      onClick={() => {
+                        setDefaultDCSortMode(opt.id);
+                        saveDCSortMode(opt.id);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setDefaultDCSortMode(opt.id);
+                          saveDCSortMode(opt.id);
+                        }
+                      }}
+                      style={{
+                        padding: '0.85rem 1rem',
+                        borderRadius: 'var(--radius-lg)',
+                        border: '2px solid',
+                        borderColor: isSelected ? 'var(--color-primary)' : 'var(--color-border)',
+                        background: isSelected ? 'var(--color-primary-light)' : 'var(--color-bg-card)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: isSelected ? 'var(--color-primary-dark)' : 'var(--color-text-main)' }}>
+                          {opt.label}
+                        </div>
+                        {isSelected && <Check size={16} color="var(--color-primary)" />}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                        {opt.desc}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Change Email */}
             <div className="card mt-4">
               <h2 className="title-md flex-row gap-2 mb-2">
@@ -1263,6 +1336,24 @@ export default function SettingsView({
                     />
                     <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.25rem', display: 'block' }}>
                       Minimum attempts on goal required to qualify for the Clinical Finisher honour (default: 3).
+                    </span>
+                  </div>
+                )}
+
+                {/* DC Smart Sort History Window (Only visible when Defensive Contributions feature is active) */}
+                {defensiveContributionsInput && (
+                  <div className="input-group" style={{ marginBottom: '1rem' }}>
+                    <label className="label">DC Quick Record: Matches of History</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      className="input"
+                      value={dcHistoryMatchesInput}
+                      onChange={(e) => setDcHistoryMatchesInput(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    />
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.25rem', display: 'block' }}>
+                      Number of previous matches used to rank players by defensive contributions in the "Smart" order of the Record DC dialog (default: {DEFAULT_DC_HISTORY_MATCHES}).
                     </span>
                   </div>
                 )}

@@ -35,6 +35,29 @@ export const DEFAULT_PERFORMANCE_WEIGHTS = {
 
 export const DEFAULT_MIN_FINISHER_ATTEMPTS = 3;
 
+export const DEFAULT_DC_HISTORY_MATCHES = 10;
+
+/**
+ * Returns how many previous matches the DC quick-record "Smart" sort
+ * looks back over when ranking players by defensive contribution history.
+ */
+export const getDCHistoryMatches = (teamInfo) => {
+  const custom = teamInfo?.settings?.dc_history_matches;
+  if (typeof custom === 'number' && custom >= 1) return custom;
+  if (teamInfo?.id) {
+    try {
+      const stored = localStorage.getItem(`team_dc_history_${teamInfo.id}`);
+      if (stored) {
+        const parsed = parseInt(stored, 10);
+        if (!isNaN(parsed) && parsed >= 1) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return DEFAULT_DC_HISTORY_MATCHES;
+};
+
 /**
  * Returns the effective performance point weights for a team.
  * Merges team custom settings over system defaults.

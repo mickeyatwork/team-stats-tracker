@@ -203,6 +203,37 @@ export function saveMatchRoleSelection(matchId, roleKey, playerIds) {
   saveUserPreferences({ match_roles: updatedMatchRoles });
 }
 
+export const DC_SORT_MODES = ['smart', 'alpha', 'position'];
+
+export function getDCPinnedPlayers(teamInfo) {
+  const teamId = teamInfo?.id;
+  if (!teamId) return [];
+  const list = readLocalCache().team_dc_pinned?.[teamId];
+  return Array.isArray(list) ? list.map(String) : [];
+}
+
+export function saveDCPinnedPlayers(teamInfo, playerIds) {
+  const teamId = teamInfo?.id;
+  if (!teamId) return;
+  const prefs = readLocalCache();
+  saveUserPreferences({
+    team_dc_pinned: {
+      ...prefs.team_dc_pinned,
+      [teamId]: playerIds.map(String)
+    }
+  });
+}
+
+export function getDCSortMode() {
+  const mode = readLocalCache().dc_sort_mode;
+  return DC_SORT_MODES.includes(mode) ? mode : 'smart';
+}
+
+export function saveDCSortMode(mode) {
+  if (!DC_SORT_MODES.includes(mode)) return;
+  saveUserPreferences({ dc_sort_mode: mode });
+}
+
 export function subscribeToUserPreferences(callback) {
   if (typeof window === 'undefined') return () => {};
   const handler = (e) => callback(e.detail || readLocalCache());
