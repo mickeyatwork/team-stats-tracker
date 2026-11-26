@@ -12,7 +12,7 @@ const RESULT_COLOURS = {
 const VIEW_BOXES = {
   attacking: { minX: -1.5, minY: -10.5, width: 103, height: 89.5 },
   defensive: { minX: -1.5, minY: 75, width: 103, height: 86 },
-  full: { minX: -4, minY: -11, width: 108, height: 173 }
+  full: { minX: -1.5, minY: -10.5, width: 103, height: 171 }
 };
 
 const MIN_ZOOM = 1;
