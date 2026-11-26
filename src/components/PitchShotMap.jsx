@@ -10,16 +10,27 @@ const RESULT_COLOURS = {
 };
 
 const VIEW_BOXES = {
-  attacking: { minX: -4, minY: -11, width: 108, height: 91 },
-  defensive: { minX: -4, minY: 74, width: 108, height: 88 },
+  attacking: { minX: -1.5, minY: -10.5, width: 103, height: 89.5 },
+  defensive: { minX: -1.5, minY: 75, width: 103, height: 86 },
   full: { minX: -4, minY: -11, width: 108, height: 173 }
 };
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 3.5;
+const HALF_DEFAULT_ZOOM = 1;
 
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
+}
+
+function getDefaultPanForScope(scope, targetZoom) {
+  if (scope === 'full' || targetZoom <= 1) return { x: 0, y: 0 };
+  const vb = VIEW_BOXES[scope] || VIEW_BOXES.attacking;
+  const zoomedW = vb.width / targetZoom;
+  const zoomedH = vb.height / targetZoom;
+  const centerX = Math.max(0, (vb.width - zoomedW) / 2);
+  const y = scope === 'defensive' ? Math.max(0, vb.height - zoomedH) : 0;
+  return { x: centerX, y };
 }
 
 /**
@@ -37,16 +48,17 @@ export default function PitchShotMap({
 }) {
   const svgRef = useRef(null);
   const wrapperRef = useRef(null);
-  const touchStartYRef = useRef(null);
   const didGestureRef = useRef(false);
   const pinchRef = useRef(null);
+  const singlePanRef = useRef(null);
+  const mouseDragRef = useRef(null);
 
-  const [pitchScope, setPitchScope] = useState(() => {
-    if (value && value.y > 50 && defaultScope === 'attacking') return 'defensive';
-    return defaultScope;
-  });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const initialScope = value && value.y > 50 && defaultScope === 'attacking' ? 'defensive' : defaultScope;
+  const initialZoom = initialScope === 'full' ? 1 : HALF_DEFAULT_ZOOM;
+
+  const [pitchScope, setPitchScope] = useState(initialScope);
+  const [zoom, setZoom] = useState(initialZoom);
+  const [pan, setPan] = useState(() => getDefaultPanForScope(initialScope, initialZoom));
 
   const isFull = pitchScope === 'full';
   const isDefensive = pitchScope === 'defensive';
@@ -68,9 +80,10 @@ export default function PitchShotMap({
   stateRef.current = { pitchScope, zoom, pan, baseViewBox, activeViewBox };
 
   const switchScope = (nextScope) => {
+    const nextZoom = nextScope === 'full' ? 1 : HALF_DEFAULT_ZOOM;
     setPitchScope(nextScope);
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+    setZoom(nextZoom);
+    setPan(getDefaultPanForScope(nextScope, nextZoom));
   };
 
   const adjustZoom = (delta) => {
@@ -80,7 +93,6 @@ export default function PitchShotMap({
         setPan({ x: 0, y: 0 });
         return 1;
       }
-      // Keep center anchored when stepping zoom via buttons
       const prevW = baseViewBox.width / prevZoom;
       const prevH = baseViewBox.height / prevZoom;
       const nextW = baseViewBox.width / nextZoom;
@@ -98,9 +110,10 @@ export default function PitchShotMap({
     if (!wrapper) return;
 
     const onTouchStart = (e) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+
       if (e.touches.length === 2) {
-        const svg = svgRef.current;
-        if (!svg) return;
         const [t1, t2] = [e.touches[0], e.touches[1]];
         const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
         const midX = (t1.clientX + t2.clientX) / 2;
@@ -114,12 +127,23 @@ export default function PitchShotMap({
           startViewBox: curVB,
           rect: svg.getBoundingClientRect()
         };
+        singlePanRef.current = null;
         didGestureRef.current = true;
-        touchStartYRef.current = null;
       } else if (e.touches.length === 1) {
-        touchStartYRef.current = e.touches[0].clientY;
+        const { zoom: curZoom, pan: curPan, activeViewBox: curVB } = stateRef.current;
         didGestureRef.current = false;
         pinchRef.current = null;
+        if (curZoom > 1) {
+          singlePanRef.current = {
+            startX: e.touches[0].clientX,
+            startY: e.touches[0].clientY,
+            startPan: curPan,
+            viewBox: curVB,
+            rect: svg.getBoundingClientRect()
+          };
+        } else {
+          singlePanRef.current = null;
+        }
       }
     };
 
@@ -151,10 +175,21 @@ export default function PitchShotMap({
           y: clamp(nextMinY - baseVB.minY, 0, Math.max(0, baseVB.height - nextH))
         });
         didGestureRef.current = true;
-      } else if (e.touches.length === 1 && touchStartYRef.current !== null) {
-        const deltaY = e.touches[0].clientY - touchStartYRef.current;
-        if (Math.abs(deltaY) > 12) {
+      } else if (e.touches.length === 1 && singlePanRef.current) {
+        const { startX, startY, startPan, viewBox: vb, rect } = singlePanRef.current;
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        if (Math.hypot(dx, dy) > 6) {
+          e.preventDefault();
           didGestureRef.current = true;
+          if (!rect.width || !rect.height) return;
+          const { baseViewBox: baseVB } = stateRef.current;
+          const dxSvg = (dx / rect.width) * vb.width;
+          const dySvg = (dy / rect.height) * vb.height;
+          setPan({
+            x: clamp(startPan.x - dxSvg, 0, Math.max(0, baseVB.width - vb.width)),
+            y: clamp(startPan.y - dySvg, 0, Math.max(0, baseVB.height - vb.height))
+          });
         }
       }
     };
@@ -162,18 +197,9 @@ export default function PitchShotMap({
     const onTouchEnd = (e) => {
       if (pinchRef.current && e.touches.length < 2) {
         pinchRef.current = null;
-        return;
       }
-      if (touchStartYRef.current === null || e.changedTouches.length === 0) return;
-      const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
-      touchStartYRef.current = null;
-
-      const { pitchScope: scope, zoom: curZoom } = stateRef.current;
-      if (curZoom > 1) return; // Don't switch halves while zoomed in
-      if (deltaY < -35 && scope === 'attacking') {
-        switchScope('defensive');
-      } else if (deltaY > 35 && scope === 'defensive') {
-        switchScope('attacking');
+      if (e.touches.length === 0) {
+        singlePanRef.current = null;
       }
     };
 
@@ -187,6 +213,39 @@ export default function PitchShotMap({
       wrapper.removeEventListener('touchend', onTouchEnd);
     };
   }, []);
+
+  const handleMouseDown = (e) => {
+    if (zoom <= 1 || e.button !== 0 || !svgRef.current) return;
+    didGestureRef.current = false;
+    mouseDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPan: pan,
+      viewBox: activeViewBox,
+      rect: svgRef.current.getBoundingClientRect()
+    };
+  };
+
+  const handleMouseMove = (e) => {
+    if (!mouseDragRef.current) return;
+    const { startX, startY, startPan, viewBox: vb, rect } = mouseDragRef.current;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.hypot(dx, dy) > 5) {
+      didGestureRef.current = true;
+      if (!rect.width || !rect.height) return;
+      const dxSvg = (dx / rect.width) * vb.width;
+      const dySvg = (dy / rect.height) * vb.height;
+      setPan({
+        x: clamp(startPan.x - dxSvg, 0, maxPanX),
+        y: clamp(startPan.y - dySvg, 0, maxPanY)
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    mouseDragRef.current = null;
+  };
 
   const handlePointerSelect = (e) => {
     if (didGestureRef.current) {
@@ -264,7 +323,7 @@ export default function PitchShotMap({
                 setZoom(1);
                 setPan({ x: 0, y: 0 });
               }}
-              title="Reset pitch zoom"
+              title="Reset pitch zoom to 1x"
             >
               <RotateCcw size={12} />
               <span>{zoom.toFixed(1)}x</span>
@@ -275,18 +334,26 @@ export default function PitchShotMap({
 
       <div className="pitch-coord-row">
         <span className="pitch-coord-readout">
-          {value ? `X ${value.x}% · Y ${value.y}%` : 'Tap pitch to mark shot · 2-finger pinch/drag to zoom'}
+          {value
+            ? `X ${value.x}% · Y ${value.y}%`
+            : zoom > 1
+              ? 'Tap to mark shot · Drag with 1 finger to pan'
+              : 'Tap pitch to mark shot · Pinch to zoom'}
         </span>
       </div>
 
       <div
         ref={wrapperRef}
-        className={`pitch-map-wrapper ${isFull ? 'is-full' : 'is-half'} ${allowFullScroll ? 'is-unclamped' : ''}`}
+        className={`pitch-map-wrapper ${isFull ? 'is-full' : 'is-half'} ${allowFullScroll ? 'is-unclamped' : ''} ${zoom > 1 ? 'is-zoomed' : ''}`}
       >
         <svg
           ref={svgRef}
           viewBox={`${activeViewBox.minX} ${activeViewBox.minY} ${activeViewBox.width} ${activeViewBox.height}`}
           onClick={handlePointerSelect}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
           className="pitch-svg"
           role="img"
           aria-label="Interactive football pitch shot map"
