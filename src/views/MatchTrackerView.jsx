@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star, Pin } from 'lucide-react';
+import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star, Pin, Sun } from 'lucide-react';
 import TopNav from '../components/TopNav';
 import PitchShotMap from '../components/PitchShotMap';
 import { supabase } from '../supabaseClient';
@@ -73,6 +73,9 @@ export default function MatchTrackerView({
   const [mainTrackerOnPitchOnly, setMainTrackerOnPitchOnly] = useState(true);
   const [showAllShotPlayers, setShowAllShotPlayers] = useState(false);
   const [showAllAssistPlayers, setShowAllAssistPlayers] = useState(false);
+  const [keepScreenAwake, setKeepScreenAwake] = useState(false);
+  const wakeLockRef = useRef(null);
+  const wakeLockSupported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
   const [onPitchPlayerIds, setOnPitchPlayerIds] = useState(() => {
     if (!activeMatch?.id) return null;
     try {
@@ -1308,6 +1311,51 @@ export default function MatchTrackerView({
     return ordered;
   })();
   useEffect(() => {
+    if (!keepScreenAwake || !wakeLockSupported) {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const requestWakeLock = async () => {
+      try {
+        const sentinel = await navigator.wakeLock.request('screen');
+        if (cancelled) {
+          sentinel.release().catch(() => {});
+          return;
+        }
+        wakeLockRef.current = sentinel;
+        sentinel.addEventListener('release', () => {
+          if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
+        });
+      } catch {
+        // Wake lock request rejected (e.g. low battery or background tab)
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !wakeLockRef.current) {
+        requestWakeLock();
+      }
+    };
+
+    requestWakeLock();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [keepScreenAwake, wakeLockSupported]);
+
+  useEffect(() => {
     if (!activeMatch?.id) {
       setOnPitchPlayerIds(null);
       return;
@@ -1938,6 +1986,22 @@ export default function MatchTrackerView({
               title="Reorder stat columns"
             >
               <ArrowUpDown size={13} /> Columns
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setKeepScreenAwake((v) => !v)}
+              disabled={!wakeLockSupported}
+              className={`btn btn-secondary ${keepScreenAwake ? 'btn-wake-lock-active' : ''}`}
+              style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
+              title={
+                wakeLockSupported
+                  ? (keepScreenAwake ? 'Screen kept awake — tap to allow sleep' : 'Keep device screen awake during match')
+                  : 'Keep screen awake is not supported in this browser'
+              }
+              aria-pressed={keepScreenAwake}
+            >
+              <Sun size={13} /> {keepScreenAwake ? 'Screen On' : 'Keep Awake'}
             </button>
 
             <button
@@ -3178,14 +3242,31 @@ export default function MatchTrackerView({
                       {activeMatch.opponent ? `vs ${activeMatch.opponent}` : 'Live match tracking'}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowUnifiedTracker(false)}
-                    className="btn-icon"
-                    aria-label="Close"
-                  >
-                    <X size={20} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => setKeepScreenAwake((v) => !v)}
+                      disabled={!wakeLockSupported}
+                      className={`unified-wake-btn ${keepScreenAwake ? 'active' : ''}`}
+                      title={
+                        wakeLockSupported
+                          ? (keepScreenAwake ? 'Screen kept awake — tap to allow sleep' : 'Keep device screen awake')
+                          : 'Keep screen awake is not supported in this browser'
+                      }
+                      aria-pressed={keepScreenAwake}
+                    >
+                      <Sun size={13} />
+                      <span>{keepScreenAwake ? 'Screen On' : 'Keep Awake'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowUnifiedTracker(false)}
+                      className="btn-icon"
+                      aria-label="Close"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Scrollable Body */}
