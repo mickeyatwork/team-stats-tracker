@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 
 const PITCH_SVG_LENGTH = 154; // 105m / 68m * 100 for true 1:1 pitch proportions
-const RESULT_COLORS = {
+const RESULT_COLOURS = {
   scored: '#22c55e',
   saved: '#f59e0b',
   missed: '#ea580c',
@@ -10,9 +10,9 @@ const RESULT_COLORS = {
 };
 
 const VIEW_BOXES = {
-  attacking: { minX: -4, minY: -8, width: 108, height: 88 },
+  attacking: { minX: -4, minY: -11, width: 108, height: 91 },
   defensive: { minX: -4, minY: 74, width: 108, height: 88 },
-  full: { minX: -4, minY: -8, width: 108, height: 170 }
+  full: { minX: -4, minY: -11, width: 108, height: 173 }
 };
 
 function clamp(val, min, max) {
@@ -25,14 +25,21 @@ function clamp(val, min, max) {
  * - x: 0 (left touchline) -> 50 (goal center) -> 100 (right touchline)
  * - y: 0 (attacking goal line) -> 50 (halfway line) -> 100 (own goal line)
  */
-export default function PitchShotMap({ value, onChange, existingShots = [] }) {
+export default function PitchShotMap({
+  value,
+  onChange,
+  existingShots = [],
+  defaultScope = 'attacking',
+  allowFullScroll = false
+}) {
   const svgRef = useRef(null);
   const touchStartYRef = useRef(null);
   const didSwipeRef = useRef(false);
 
-  const [pitchScope, setPitchScope] = useState(() =>
-    value && value.y > 50 ? 'defensive' : 'attacking'
-  );
+  const [pitchScope, setPitchScope] = useState(() => {
+    if (value && value.y > 50 && defaultScope === 'attacking') return 'defensive';
+    return defaultScope;
+  });
 
   const isFull = pitchScope === 'full';
   const isDefensive = pitchScope === 'defensive';
@@ -119,7 +126,7 @@ export default function PitchShotMap({ value, onChange, existingShots = [] }) {
       </div>
 
       <div
-        className={`pitch-map-wrapper ${isFull ? 'is-full' : 'is-half'}`}
+        className={`pitch-map-wrapper ${isFull ? 'is-full' : 'is-half'} ${allowFullScroll ? 'is-unclamped' : ''}`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -155,16 +162,39 @@ export default function PitchShotMap({ value, onChange, existingShots = [] }) {
             ))}
           </g>
 
-          {/* Attacking Goal Net (top, y < 0) */}
-          <rect
-            x="44.6"
-            y="-4.2"
-            width="10.8"
-            height="4.2"
-            fill="rgba(255,255,255,0.16)"
-            stroke="#ffffff"
-            strokeWidth="0.8"
-          />
+          {/* Attacking Goal Marker & Net (top, y < 0) */}
+          <g pointerEvents="none">
+            <rect
+              x="33"
+              y="-9.8"
+              width="34"
+              height="4.4"
+              rx="2.2"
+              fill="rgba(255,255,255,0.18)"
+              stroke="rgba(255,255,255,0.45)"
+              strokeWidth="0.4"
+            />
+            <text
+              x="50"
+              y="-6.8"
+              textAnchor="middle"
+              fill="#ffffff"
+              fontSize="2.7"
+              fontWeight="800"
+              letterSpacing="0.35"
+            >
+              ↑ ATTACKING
+            </text>
+            <rect
+              x="44.6"
+              y="-4.2"
+              width="10.8"
+              height="4.2"
+              fill="rgba(255,255,255,0.22)"
+              stroke="#ffffff"
+              strokeWidth="0.8"
+            />
+          </g>
 
           {/* Pitch Markings */}
           <g fill="none" stroke="rgba(255,255,255,0.88)" strokeWidth="0.65">
@@ -212,7 +242,7 @@ export default function PitchShotMap({ value, onChange, existingShots = [] }) {
           {existingShots
             .filter((s) => typeof s.pitch_x === 'number' && typeof s.pitch_y === 'number')
             .map((shot, idx) => {
-              const color = RESULT_COLORS[shot.result] || '#ffffff';
+              const color = RESULT_COLOURS[shot.result] || '#ffffff';
               return (
                 <circle
                   key={shot.id || `shot-${idx}`}
@@ -250,10 +280,10 @@ export default function PitchShotMap({ value, onChange, existingShots = [] }) {
 
       {existingShots.some((s) => typeof s.pitch_x === 'number') && (
         <div className="pitch-legend">
-          <span><i style={{ background: RESULT_COLORS.scored }} /> Goal</span>
-          <span><i style={{ background: RESULT_COLORS.saved }} /> Saved</span>
-          <span><i style={{ background: RESULT_COLORS.missed }} /> Missed</span>
-          <span><i style={{ background: RESULT_COLORS.blocked }} /> Blocked</span>
+          <span><i style={{ background: RESULT_COLOURS.scored }} /> Goal</span>
+          <span><i style={{ background: RESULT_COLOURS.saved }} /> Saved</span>
+          <span><i style={{ background: RESULT_COLOURS.missed }} /> Missed</span>
+          <span><i style={{ background: RESULT_COLOURS.blocked }} /> Blocked</span>
         </div>
       )}
     </div>
