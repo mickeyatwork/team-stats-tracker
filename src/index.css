@@ -3760,10 +3760,53 @@ body {
 }
 
 .pitch-coord-readout {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.pitch-coord-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pitch-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pitch-zoom-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  height: 1.7rem;
+  padding: 0 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pitch-zoom-controls button:hover:not(:disabled) {
+  color: var(--color-text-main);
+  border-color: var(--color-text-light);
+}
+
+.pitch-zoom-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pitch-zoom-reset {
+  color: #ea580c !important;
+  border-color: rgba(234, 88, 12, 0.35) !important;
 }
 
 .pitch-map-wrapper {
@@ -4127,6 +4170,33 @@ body {
 .shot-show-all-btn:hover {
   color: var(--color-text-main);
 }
+
+.btn-wake-lock-active,
+.unified-wake-btn.active {
+  background: rgba(245, 158, 11, 0.14) !important;
+  border-color: rgba(245, 158, 11, 0.5) !important;
+  color: #b45309 !important;
+}
+
+.unified-wake-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-body);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.unified-wake-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 
 
 .unified-save-plus:active,
