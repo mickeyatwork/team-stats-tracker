@@ -2374,8 +2374,8 @@ export default function MatchTrackerView({
 
         {/* Shot Pitch Map Modal */}
         {shotModal && (
-          <div className="modal-overlay" onClick={() => setShotModal(null)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+          <div className="modal-overlay is-pitch-overlay" onClick={() => setShotModal(null)}>
+            <div className="modal-content shot-modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="flex-between mb-3">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <div style={{
@@ -3241,7 +3241,7 @@ export default function MatchTrackerView({
           const isSaveJustTapped = activeGk && justTappedSaveId === activeGk.id;
 
           return (
-            <div className="modal-overlay" onClick={() => setShowUnifiedTracker(false)}>
+            <div className="modal-overlay is-pitch-overlay" onClick={() => setShowUnifiedTracker(false)}>
               <div
                 className="modal-content unified-tracker-modal"
                 onClick={(e) => e.stopPropagation()}
@@ -3459,7 +3459,7 @@ export default function MatchTrackerView({
 
                   {/* 3. Shot Pitch Map Section */}
                   {showShotPitchMap && (
-                    <section className="unified-section">
+                    <section className="unified-section unified-shot-section">
                       <div className="unified-section-header">
                         <div className="unified-section-title">
                           <Crosshair size={16} style={{ color: '#ea580c' }} />
