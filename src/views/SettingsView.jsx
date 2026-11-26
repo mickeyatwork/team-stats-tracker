@@ -93,6 +93,7 @@ export default function SettingsView({
   const [matchDynamicsInput, setMatchDynamicsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
   const [efficiencyRatingInput, setEfficiencyRatingInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
   const [attemptsInput, setAttemptsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
+  const [shotPitchMapInput, setShotPitchMapInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.SHOT_PITCH_MAP));
   const [defensiveContributionsInput, setDefensiveContributionsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
   const [performancePointsInput, setPerformancePointsInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS));
   const [playerOfTheMatchInput, setPlayerOfTheMatchInput] = useState(() => isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH));
@@ -213,6 +214,7 @@ export default function SettingsView({
       setMatchDynamicsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.MATCH_DYNAMICS));
       setEfficiencyRatingInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.EFFICIENCY_RATING));
       setAttemptsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS));
+      setShotPitchMapInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.SHOT_PITCH_MAP));
       setDefensiveContributionsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS));
       setPerformancePointsInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.PERFORMANCE_POINTS));
       setPlayerOfTheMatchInput(isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH));
@@ -300,6 +302,7 @@ export default function SettingsView({
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
+        [FEATURE_KEYS.SHOT_PITCH_MAP]: shotPitchMapInput,
         [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
         [FEATURE_KEYS.PERFORMANCE_POINTS]: performancePointsInput,
         [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: playerOfTheMatchInput,
@@ -345,6 +348,7 @@ export default function SettingsView({
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.MATCH_DYNAMICS, matchDynamicsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.EFFICIENCY_RATING, efficiencyRatingInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.ATTEMPTS, attemptsInput);
+      setFeatureFlag(teamInfo.id, FEATURE_KEYS.SHOT_PITCH_MAP, shotPitchMapInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS, defensiveContributionsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.PERFORMANCE_POINTS, performancePointsInput);
       setFeatureFlag(teamInfo.id, FEATURE_KEYS.PLAYER_OF_THE_MATCH, playerOfTheMatchInput);
@@ -369,6 +373,7 @@ export default function SettingsView({
         [FEATURE_KEYS.MATCH_DYNAMICS]: matchDynamicsInput,
         [FEATURE_KEYS.EFFICIENCY_RATING]: efficiencyRatingInput,
         [FEATURE_KEYS.ATTEMPTS]: attemptsInput,
+        [FEATURE_KEYS.SHOT_PITCH_MAP]: shotPitchMapInput,
         [FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS]: defensiveContributionsInput,
         [FEATURE_KEYS.PERFORMANCE_POINTS]: performancePointsInput,
         [FEATURE_KEYS.PLAYER_OF_THE_MATCH]: playerOfTheMatchInput,
@@ -1846,6 +1851,57 @@ export default function SettingsView({
                       position: 'absolute',
                       top: '0.2rem',
                       left: attemptsInput ? 'calc(100% - 1.35rem)' : '0.2rem',
+                      width: '1.35rem',
+                      height: '1.35rem',
+                      background: 'white',
+                      borderRadius: '50%',
+                      transition: 'left 0.2s',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* Shot Pitch Map Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem 1rem',
+                  background: 'var(--color-border-light)',
+                  borderRadius: 'var(--radius-lg)',
+                  marginBottom: '0.75rem',
+                  opacity: attemptsInput ? 1 : 0.55
+                }}
+              >
+                <div style={{ paddingRight: '1rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Shot Pitch Map</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    Mark shot locations on a pitch map when recording attempts (requires Attempts at Goal)
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={!attemptsInput}
+                  onClick={() => setShotPitchMapInput((v) => !v)}
+                  style={{
+                    width: '3rem',
+                    height: '1.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    cursor: attemptsInput ? 'pointer' : 'not-allowed',
+                    transition: 'background 0.2s',
+                    background: attemptsInput && shotPitchMapInput ? 'var(--color-primary)' : 'var(--color-border)',
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '0.2rem',
+                      left: attemptsInput && shotPitchMapInput ? 'calc(100% - 1.35rem)' : '0.2rem',
                       width: '1.35rem',
                       height: '1.35rem',
                       background: 'white',

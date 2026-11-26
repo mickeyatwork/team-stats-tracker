@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus, Target, Award, Shield, CheckCircle, EyeOff, Edit2, Check, X, Users, Clock, ChevronUp, ChevronDown, Trash2, UserPlus, Crosshair, ShieldCheck, ArrowUpDown, RotateCcw, GripVertical, Star, Pin } from 'lucide-react';
 import TopNav from '../components/TopNav';
+import PitchShotMap from '../components/PitchShotMap';
 import { supabase } from '../supabaseClient';
 import {
   computeTimelineWithScores,
@@ -58,6 +59,8 @@ export default function MatchTrackerView({
   const [showAmendSquad, setShowAmendSquad] = useState(false);
   const [assistModalScorer, setAssistModalScorer] = useState(null);
   const [attemptModalPlayer, setAttemptModalPlayer] = useState(null);
+  const [shotModal, setShotModal] = useState(null); // { step: 'pitch'|'player'|'outcome', location: {x,y}|null, playerId: string|null, fromPlayerRow: boolean }
+  const [pendingGoalLocation, setPendingGoalLocation] = useState(null);
   const [playerToRemove, setPlayerToRemove] = useState(null); // { id, name }
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('matchTrackerViewMode') || 'table';
@@ -66,6 +69,23 @@ export default function MatchTrackerView({
   const [showCaptainDialog, setShowCaptainDialog] = useState(false);
   const [showPotmDialog, setShowPotmDialog] = useState(false);
   const [showDCDialog, setShowDCDialog] = useState(false);
+  const [showOnPitchDialog, setShowOnPitchDialog] = useState(false);
+  const [mainTrackerOnPitchOnly, setMainTrackerOnPitchOnly] = useState(true);
+  const [showAllShotPlayers, setShowAllShotPlayers] = useState(false);
+  const [showAllAssistPlayers, setShowAllAssistPlayers] = useState(false);
+  const [onPitchPlayerIds, setOnPitchPlayerIds] = useState(() => {
+    if (!activeMatch?.id) return null;
+    try {
+      const saved = localStorage.getItem(`match_on_pitch_${activeMatch.id}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [showUnifiedTracker, setShowUnifiedTracker] = useState(false);
+  const [unifiedShotDraft, setUnifiedShotDraft] = useState(null);
+  const [activeUnifiedGkId, setActiveUnifiedGkId] = useState(null);
+  const [justTappedSaveId, setJustTappedSaveId] = useState(null);
   const [justTappedDCId, setJustTappedDCId] = useState(null);
   const [dcSortMode, setDcSortMode] = useState(() => getDCSortMode());
   const [dcPinnedIds, setDcPinnedIds] = useState(() => getDCPinnedPlayers(teamInfo));
@@ -78,6 +98,7 @@ export default function MatchTrackerView({
   const [dragOverColKey, setDragOverColKey] = useState(null);
 
   const showAttempts = isFeatureEnabled(teamInfo, FEATURE_KEYS.ATTEMPTS);
+  const showShotPitchMap = showAttempts && isFeatureEnabled(teamInfo, FEATURE_KEYS.SHOT_PITCH_MAP);
   const showDC = isFeatureEnabled(teamInfo, FEATURE_KEYS.DEFENSIVE_CONTRIBUTIONS);
   const showPotm = isFeatureEnabled(teamInfo, FEATURE_KEYS.PLAYER_OF_THE_MATCH);
   const showCaptain = isFeatureEnabled(teamInfo, FEATURE_KEYS.CAPTAIN);
@@ -125,6 +146,7 @@ export default function MatchTrackerView({
   const [assignStep, setAssignStep] = useState('scorer'); // 'scorer' | 'assister'
   const [selectedScorerId, setSelectedScorerId] = useState(null);
   const reorderSaveTimerRef = useRef(null);
+  const shotStageRef = useRef(null);
   const latestStateRef = useRef({ match: activeMatch, goalEvents });
 
   useEffect(() => {
@@ -461,32 +483,51 @@ export default function MatchTrackerView({
   };
 
   const handleAddGoalClick = (playerId) => {
+    setShowAllAssistPlayers(false);
     setAssistModalScorer(playerId);
   };
 
   const handleAttemptClick = (playerId) => {
-    setAttemptModalPlayer(playerId);
+    setShowAllShotPlayers(false);
+    if (showShotPitchMap) {
+      setShotModal({ step: 'pitch', location: null, playerId, fromPlayerRow: true });
+    } else {
+      setAttemptModalPlayer(playerId);
+    }
   };
 
-  const handleAttemptResult = async (result) => {
-    const playerId = attemptModalPlayer;
+  const openShotDialog = () => {
+    setShowAllShotPlayers(false);
+    setShotModal({ step: 'pitch', location: null, playerId: null, fromPlayerRow: false });
+  };
+
+  const recordAttemptOutcome = async (playerId, result, location = null) => {
     if (!playerId) return;
 
     if (result === 'scored') {
+      setPendingGoalLocation(location);
       setAttemptModalPlayer(null);
+      setShotModal(null);
+      setShowAllAssistPlayers(false);
       setAssistModalScorer(playerId);
     } else {
       updateMatchStat(activeMatch.id, playerId, 'attempts', 1);
       setAttemptModalPlayer(null);
+      setShotModal(null);
 
       // Persist to attempt_events table
       try {
-        const { data, error } = await supabase.from('attempt_events').insert([{
+        const payload = {
           match_id: activeMatch.id,
           player_id: playerId,
           result: result,
           created_at: new Date().toISOString()
-        }]).select().single();
+        };
+        if (location) {
+          payload.pitch_x = location.x;
+          payload.pitch_y = location.y;
+        }
+        const { data, error } = await supabase.from('attempt_events').insert([payload]).select().single();
         if (!error && data) {
           setAttemptEvents((prev) => [...prev, data]);
         }
@@ -494,6 +535,15 @@ export default function MatchTrackerView({
         console.warn('Could not insert attempt_event:', err);
       }
     }
+  };
+
+  const handleAttemptResult = async (result) => {
+    await recordAttemptOutcome(attemptModalPlayer, result, null);
+  };
+
+  const handleShotModalOutcome = async (result) => {
+    if (!shotModal?.playerId) return;
+    await recordAttemptOutcome(shotModal.playerId, result, shotModal.location);
   };
 
   const handleAttemptDecrement = async (playerId) => {
@@ -527,7 +577,9 @@ export default function MatchTrackerView({
 
   const processGoalWithAssist = async (assisterId) => {
     const scorerId = assistModalScorer;
+    const shotLoc = pendingGoalLocation;
     setAssistModalScorer(null);
+    setPendingGoalLocation(null);
 
     // Get current state to ensure we have the latest values for DB
     const m = matches.find((x) => x.id === activeMatch.id);
@@ -642,12 +694,17 @@ export default function MatchTrackerView({
     // Also log to attempt_events as scored if attempts tracking is enabled
     if (showAttempts) {
       try {
-        const { data: attemptEvt } = await supabase.from('attempt_events').insert([{
+        const attemptPayload = {
           match_id: activeMatch.id,
           player_id: scorerId,
           result: 'scored',
           created_at: new Date().toISOString()
-        }]).select().single();
+        };
+        if (shotLoc) {
+          attemptPayload.pitch_x = shotLoc.x;
+          attemptPayload.pitch_y = shotLoc.y;
+        }
+        const { data: attemptEvt } = await supabase.from('attempt_events').insert([attemptPayload]).select().single();
         if (attemptEvt) {
           setAttemptEvents((prev) => [...prev, attemptEvt]);
         }
@@ -1192,6 +1249,30 @@ export default function MatchTrackerView({
     setShowDCDialog(true);
   };
 
+  const openUnifiedTracker = () => {
+    const defaultMode = getDCSortMode();
+    setDcSortMode(defaultMode);
+    setDcOrderSnapshot(computeDCOrder(defaultMode, dcPinnedIds));
+    setDcPinEditMode(false);
+    setUnifiedShotDraft(null);
+    setActiveUnifiedGkId(goalkeepers[0]?.id || null);
+    setShowUnifiedTracker(true);
+  };
+
+  const recordUnifiedSave = (gkId) => {
+    if (!gkId) return;
+    updateMatchStat(activeMatch.id, gkId, 'saves', 1);
+    setJustTappedSaveId(gkId);
+    setTimeout(() => setJustTappedSaveId((curr) => (curr === gkId ? null : curr)), 350);
+  };
+
+  const handleUnifiedShotOutcome = async (result) => {
+    if (!unifiedShotDraft?.playerId) return;
+    const { playerId, location } = unifiedShotDraft;
+    setUnifiedShotDraft(null);
+    await recordAttemptOutcome(playerId, result, location);
+  };
+
   const closeDCDialog = () => {
     setShowDCDialog(false);
     setDcPinEditMode(false);
@@ -1226,9 +1307,114 @@ export default function MatchTrackerView({
     });
     return ordered;
   })();
+  useEffect(() => {
+    if (!activeMatch?.id) {
+      setOnPitchPlayerIds(null);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(`match_on_pitch_${activeMatch.id}`);
+      setOnPitchPlayerIds(saved ? JSON.parse(saved) : null);
+    } catch {
+      setOnPitchPlayerIds(null);
+    }
+  }, [activeMatch?.id]);
+
   const dcPinnedSet = new Set(dcPinnedIds);
-  const dcPinnedPlayers = dcOrderedPlayers.filter((p) => dcPinnedSet.has(String(p.id)));
-  const dcOtherPlayers = dcOrderedPlayers.filter((p) => !dcPinnedSet.has(String(p.id)));
+  const onPitchSet = Array.isArray(onPitchPlayerIds) ? new Set(onPitchPlayerIds.map(String)) : null;
+  const onPitchPlayers = onPitchSet
+    ? playersInMatch.filter((p) => onPitchSet.has(String(p.id)))
+    : playersInMatch;
+  const mainTrackerPlayers = onPitchSet && mainTrackerOnPitchOnly ? onPitchPlayers : playersInMatch;
+  const shotSelectablePlayers = onPitchSet && !showAllShotPlayers ? onPitchPlayers : playersInMatch;
+  const assistSelectablePlayers = (
+    onPitchSet && !showAllAssistPlayers ? onPitchPlayers : playersInMatch
+  ).filter((p) => p.id !== assistModalScorer);
+  const dcVisiblePlayers = onPitchSet
+    ? dcOrderedPlayers.filter((p) => onPitchSet.has(String(p.id)))
+    : dcOrderedPlayers;
+  const dcPinnedPlayers = dcVisiblePlayers.filter((p) => dcPinnedSet.has(String(p.id)));
+  const dcOtherPlayers = dcVisiblePlayers.filter((p) => !dcPinnedSet.has(String(p.id)));
+
+  const persistOnPitchIds = (nextIds) => {
+    setOnPitchPlayerIds(nextIds);
+    if (!activeMatch?.id) return;
+    try {
+      if (nextIds === null) {
+        localStorage.removeItem(`match_on_pitch_${activeMatch.id}`);
+      } else {
+        localStorage.setItem(`match_on_pitch_${activeMatch.id}`, JSON.stringify(nextIds));
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const toggleOnPitchPlayer = (playerId) => {
+    const id = String(playerId);
+    const current = Array.isArray(onPitchPlayerIds)
+      ? onPitchPlayerIds.map(String)
+      : playersInMatch.map((p) => String(p.id));
+    const next = current.includes(id)
+      ? current.filter((pid) => pid !== id)
+      : [...current, id];
+    persistOnPitchIds(next);
+  };
+
+  const renderDCTile = (player) => {
+    const isJustTapped = justTappedDCId === player.id;
+    const isPinned = dcPinnedSet.has(String(player.id));
+    return (
+      <div
+        key={player.id}
+        role="button"
+        tabIndex={0}
+        className={`dc-tap-tile ${isJustTapped ? 'just-tapped' : ''} ${dcPinEditMode ? 'pin-edit' : ''} ${dcPinEditMode && isPinned ? 'pinned' : ''}`}
+        onClick={() => (dcPinEditMode ? toggleDCPin(player.id) : recordDC(player.id))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (dcPinEditMode) toggleDCPin(player.id);
+            else recordDC(player.id);
+          }
+        }}
+        title={dcPinEditMode ? (isPinned ? `Unpin ${player.name}` : `Pin ${player.name}`) : `Add DC for ${player.name}`}
+        aria-label={dcPinEditMode ? (isPinned ? `Unpin ${player.name}` : `Pin ${player.name}`) : `Add DC for ${player.name}`}
+      >
+        <div className="dc-tap-tile-name">{player.name}</div>
+        <div className="dc-tap-tile-footer">
+          <span className="dc-tap-tile-pos">
+            {!teamInfo.hide_positions && player.position ? player.position : ''}
+          </span>
+          {dcPinEditMode ? (
+            <span className="dc-tap-tile-pin">
+              <Pin size={14} fill={isPinned ? 'currentColor' : 'none'} />
+            </span>
+          ) : (
+            <div className="dc-tap-tile-controls">
+              <span className="dc-tile-count" title="Defensive Contributions this match">
+                {player.defensive_contributions}
+              </span>
+              {player.defensive_contributions > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1);
+                  }}
+                  className="btn-dc-tile-minus"
+                  title={`Decrease DC for ${player.name}`}
+                  aria-label={`Decrease DC for ${player.name}`}
+                >
+                  −
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const columnDefs = {
     goals: {
@@ -1642,6 +1828,23 @@ export default function MatchTrackerView({
             </button>
           )}
 
+          {(showDC || showShotPitchMap) && (
+            <div className="tracker-actions-divider" role="separator">
+              <span>Live Tracking</span>
+            </div>
+          )}
+
+          {(showDC || showShotPitchMap) && (
+              <button
+                  type="button"
+                  onClick={openUnifiedTracker}
+                  className="btn-action-tracker btn-action-unified"
+                  title="Combined Saves, Defensive Contributions, and Shot Pitch tracker"
+              >
+                <span className="btn-action-title">Matchday Console</span>
+              </button>
+          )}
+
           {showDC && (
             <button
               type="button"
@@ -1651,6 +1854,18 @@ export default function MatchTrackerView({
             >
               <span className="btn-action-title">Record Defensive Contributions</span>
               {totalDC > 0 && <span className="btn-action-badge dc">{totalDC}</span>}
+            </button>
+          )}
+
+          {showShotPitchMap && (
+            <button
+              type="button"
+              onClick={openShotDialog}
+              className="btn-action-tracker btn-action-shot"
+              title="Mark shot location on pitch and record attempt"
+            >
+              <span className="btn-action-title">Record Shot</span>
+              {totalAttempts > 0 && <span className="btn-action-badge shot">{totalAttempts}</span>}
             </button>
           )}
         </div>
@@ -1675,6 +1890,26 @@ export default function MatchTrackerView({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {/* On Pitch vs All Filter Toggle */}
+            {onPitchSet && (
+              <div className="view-mode-toggle" title="Filter squad list by players currently on the pitch">
+                <button
+                  type="button"
+                  onClick={() => setMainTrackerOnPitchOnly(true)}
+                  className={`btn-mode-toggle ${mainTrackerOnPitchOnly ? 'active' : ''}`}
+                >
+                  On Pitch ({onPitchPlayers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMainTrackerOnPitchOnly(false)}
+                  className={`btn-mode-toggle ${!mainTrackerOnPitchOnly ? 'active' : ''}`}
+                >
+                  All ({playersInMatch.length})
+                </button>
+              </div>
+            )}
+
             {/* View Mode Toggle */}
             <div className="view-mode-toggle">
               <button
@@ -1705,6 +1940,16 @@ export default function MatchTrackerView({
               <ArrowUpDown size={13} /> Columns
             </button>
 
+            <button
+              type="button"
+              onClick={() => setShowOnPitchDialog(true)}
+              className={`btn btn-secondary ${onPitchSet ? 'btn-col-order-active' : ''}`}
+              style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
+              title="Select players currently on the pitch"
+            >
+              On Pitch{onPitchSet ? ` (${onPitchPlayers.length}/${playersInMatch.length})` : ''}
+            </button>
+
             <button 
               onClick={() => setShowAmendSquad(true)} 
               className="btn btn-secondary"
@@ -1722,7 +1967,16 @@ export default function MatchTrackerView({
                Card Mode (Thumb-Friendly, No Horizontal Overflow)
                ======================================= */
             <div>
-              {playersInMatch.map((player) => (
+              {onPitchSet && mainTrackerOnPitchOnly && mainTrackerPlayers.length === 0 && playersInMatch.length > 0 && (
+                <div className="empty-state" style={{ marginBottom: '0.75rem' }}>
+                  No players marked as on the pitch.{' '}
+                  <button type="button" className="dc-on-pitch-btn active" onClick={() => setShowOnPitchDialog(true)}>
+                    Select On Pitch
+                  </button>{' '}
+                  or switch to <strong>All</strong>.
+                </div>
+              )}
+              {mainTrackerPlayers.map((player) => (
                 <div key={player.id} className="stat-card-row">
                   <div className="stat-card-top">
                     <div className="stat-card-player">
@@ -1842,7 +2096,16 @@ export default function MatchTrackerView({
                 </div>
               </div>
 
-              {playersInMatch.map((player) => (
+              {onPitchSet && mainTrackerOnPitchOnly && mainTrackerPlayers.length === 0 && playersInMatch.length > 0 && (
+                <div className="empty-state" style={{ margin: '0.75rem' }}>
+                  No players marked as on the pitch.{' '}
+                  <button type="button" className="dc-on-pitch-btn active" onClick={() => setShowOnPitchDialog(true)}>
+                    Select On Pitch
+                  </button>{' '}
+                  or switch to <strong>All</strong>.
+                </div>
+              )}
+              {mainTrackerPlayers.map((player) => (
                 <div key={player.id} className="stat-row">
                   <div className="stat-player-col">
                     <div className="stat-player-info">
@@ -2033,6 +2296,198 @@ export default function MatchTrackerView({
           </div>
         )}
 
+        {/* Shot Pitch Map Modal */}
+        {shotModal && (
+          <div className="modal-overlay" onClick={() => setShotModal(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+              <div className="flex-between mb-3">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    width: '2rem',
+                    height: '2rem',
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'rgba(234, 88, 12, 0.15)',
+                    color: '#ea580c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <Crosshair size={18} />
+                  </div>
+                  <div>
+                    <h3 className="title-md" style={{ marginBottom: 0 }}>Record Shot</h3>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                      {shotModal.playerId
+                        ? playersInMatch.find((p) => p.id === shotModal.playerId)?.name
+                        : 'Mark pitch, pick player, choose outcome'}
+                    </span>
+                  </div>
+                </div>
+                <button onClick={() => setShotModal(null)} className="btn-icon" aria-label="Close">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Stepper */}
+              <div className="shot-stepper">
+                <span className={shotModal.step === 'pitch' ? 'active' : 'done'}>1. Pitch</span>
+                {!shotModal.fromPlayerRow && (
+                  <span className={shotModal.step === 'player' ? 'active' : shotModal.step === 'outcome' ? 'done' : ''}>
+                    2. Player
+                  </span>
+                )}
+                <span className={shotModal.step === 'outcome' ? 'active' : ''}>
+                  {shotModal.fromPlayerRow ? '2. Outcome' : '3. Outcome'}
+                </span>
+              </div>
+
+              {shotModal.step === 'pitch' && (
+                <div>
+                  <PitchShotMap
+                    value={shotModal.location}
+                    allowFullScroll
+                    onChange={(loc) =>
+                      setShotModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              location: loc,
+                              step: prev.fromPlayerRow ? 'outcome' : 'player'
+                            }
+                          : prev
+                      )
+                    }
+                    existingShots={_attemptEvents}
+                  />
+                  <div style={{ marginTop: '0.9rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ width: '100%' }}
+                      onClick={() =>
+                        setShotModal((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                location: null,
+                                step: prev.fromPlayerRow ? 'outcome' : 'player'
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      Skip Location
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {shotModal.step === 'player' && (
+                <div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                    Who took the shot?
+                  </p>
+                  <div className="shot-player-grid">
+                    {shotSelectablePlayers.map((player) => (
+                      <button
+                        key={player.id}
+                        type="button"
+                        className={`shot-player-tile ${shotModal.playerId === player.id ? 'selected' : ''}`}
+                        onClick={() =>
+                          setShotModal((prev) =>
+                            prev ? { ...prev, playerId: player.id, step: 'outcome' } : prev
+                          )
+                        }
+                      >
+                        <div className="avatar" style={{ width: '1.85rem', height: '1.85rem', fontSize: '0.8rem', flexShrink: 0 }}>
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="shot-player-name">{player.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {onPitchSet && (
+                    <button
+                      type="button"
+                      className="shot-show-all-btn"
+                      onClick={() => setShowAllShotPlayers((v) => !v)}
+                    >
+                      {showAllShotPlayers
+                        ? `Show on-pitch only (${onPitchPlayers.length})`
+                        : `Show all squad (${playersInMatch.length})`}
+                    </button>
+                  )}
+                  <div style={{ display: 'flex', gap: '0.65rem', marginTop: '0.9rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ width: '100%' }}
+                      onClick={() =>
+                        setShotModal((prev) => (prev ? { ...prev, step: 'pitch' } : prev))
+                      }
+                    >
+                      Back to Pitch
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {shotModal.step === 'outcome' && (
+                <div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '0.85rem' }}>
+                    What was the outcome of this shot?
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    <div onClick={() => handleShotModalOutcome('scored')} className="attempt-choice-card scored">
+                      <div className="attempt-choice-icon scored">⚽</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title scored">Scored (Goal)</span>
+                        <span className="attempt-choice-desc">Logs goal, adds attempt, and assigns assist</span>
+                      </div>
+                    </div>
+                    <div onClick={() => handleShotModalOutcome('saved')} className="attempt-choice-card saved">
+                      <div className="attempt-choice-icon saved">🧤</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title saved">Saved</span>
+                        <span className="attempt-choice-desc">Shot on target saved by opposition goalkeeper</span>
+                      </div>
+                    </div>
+                    <div onClick={() => handleShotModalOutcome('missed')} className="attempt-choice-card missed">
+                      <div className="attempt-choice-icon missed">❌</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title missed">Missed (Off Target)</span>
+                        <span className="attempt-choice-desc">Shot wide or over the crossbar</span>
+                      </div>
+                    </div>
+                    <div onClick={() => handleShotModalOutcome('blocked')} className="attempt-choice-card blocked">
+                      <div className="attempt-choice-icon blocked">🛡️</div>
+                      <div className="attempt-choice-text">
+                        <span className="attempt-choice-title blocked">Blocked</span>
+                        <span className="attempt-choice-desc">Shot blocked by an outfield defender</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary mt-3"
+                    style={{ width: '100%' }}
+                    onClick={() =>
+                      setShotModal((prev) =>
+                        prev
+                          ? { ...prev, step: prev.fromPlayerRow ? 'pitch' : 'player' }
+                          : prev
+                      )
+                    }
+                  >
+                    {shotModal.fromPlayerRow ? 'Back to Pitch' : 'Back to Player'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Attempt Result Modal */}
         {attemptModalPlayer && (
           <div className="modal-overlay" onClick={() => setAttemptModalPlayer(null)}>
@@ -2133,7 +2588,7 @@ export default function MatchTrackerView({
         {assistModalScorer && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+            background: 'rgba(0,0,0,0.5)', zIndex: 1100,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
           }}>
             <div className="card" style={{ width: '100%', maxWidth: '400px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
@@ -2141,7 +2596,7 @@ export default function MatchTrackerView({
                 <h3 className="title-md" style={{ marginBottom: 0 }}>
                   Who assisted {playersInMatch.find(p => p.id === assistModalScorer)?.name}?
                 </h3>
-                <button onClick={() => setAssistModalScorer(null)} className="btn-icon">
+                <button onClick={() => { setAssistModalScorer(null); setPendingGoalLocation(null); }} className="btn-icon">
                   <X size={20} />
                 </button>
               </div>
@@ -2160,7 +2615,7 @@ export default function MatchTrackerView({
                 
                 <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>Select Assister:</div>
-                  {playersInMatch.filter(p => p.id !== assistModalScorer).map((player) => (
+                  {assistSelectablePlayers.map((player) => (
                     <div
                       key={player.id}
                       onClick={() => processGoalWithAssist(player.id)}
@@ -2179,6 +2634,17 @@ export default function MatchTrackerView({
                       </span>
                     </div>
                   ))}
+                  {onPitchSet && (
+                    <button
+                      type="button"
+                      className="shot-show-all-btn"
+                      onClick={() => setShowAllAssistPlayers((v) => !v)}
+                    >
+                      {showAllAssistPlayers
+                        ? 'Show on-pitch only'
+                        : `Show all squad (${playersInMatch.length - 1})`}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -2286,7 +2752,7 @@ export default function MatchTrackerView({
 
         {/* Assign Goalkeeper Modal */}
         {showGkDialog && (
-          <div className="modal-overlay" onClick={() => setShowGkDialog(false)}>
+          <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowGkDialog(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
               <div className="flex-between mb-3">
                 <h3 className="title-md" style={{ marginBottom: 0 }}>Goalkeepers</h3>
@@ -2585,63 +3051,7 @@ export default function MatchTrackerView({
         )}
 
         {/* Quick Record Defensive Contributions Modal */}
-        {showDCDialog && (() => {
-          const renderDCTile = (player) => {
-            const isJustTapped = justTappedDCId === player.id;
-            const isPinned = dcPinnedSet.has(String(player.id));
-            return (
-              <div
-                key={player.id}
-                role="button"
-                tabIndex={0}
-                className={`dc-tap-tile ${isJustTapped ? 'just-tapped' : ''} ${dcPinEditMode ? 'pin-edit' : ''} ${dcPinEditMode && isPinned ? 'pinned' : ''}`}
-                onClick={() => (dcPinEditMode ? toggleDCPin(player.id) : recordDC(player.id))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    if (dcPinEditMode) toggleDCPin(player.id);
-                    else recordDC(player.id);
-                  }
-                }}
-                title={dcPinEditMode ? (isPinned ? `Unpin ${player.name}` : `Pin ${player.name}`) : `Add DC for ${player.name}`}
-                aria-label={dcPinEditMode ? (isPinned ? `Unpin ${player.name}` : `Pin ${player.name}`) : `Add DC for ${player.name}`}
-              >
-                <div className="dc-tap-tile-name">{player.name}</div>
-                <div className="dc-tap-tile-footer">
-                  <span className="dc-tap-tile-pos">
-                    {!teamInfo.hide_positions && player.position ? player.position : ''}
-                  </span>
-                  {dcPinEditMode ? (
-                    <span className="dc-tap-tile-pin">
-                      <Pin size={14} fill={isPinned ? 'currentColor' : 'none'} />
-                    </span>
-                  ) : (
-                    <div className="dc-tap-tile-controls">
-                      <span className="dc-tile-count" title="Defensive Contributions this match">
-                        {player.defensive_contributions}
-                      </span>
-                      {player.defensive_contributions > 0 && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateMatchStat(activeMatch.id, player.id, 'defensive_contributions', -1);
-                          }}
-                          className="btn-dc-tile-minus"
-                          title={`Decrease DC for ${player.name}`}
-                          aria-label={`Decrease DC for ${player.name}`}
-                        >
-                          −
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          };
-
-          return (
+        {showDCDialog && (
             <div className="modal-overlay" onClick={closeDCDialog}>
               <div className="modal-content dc-quick-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="flex-between mb-2">
@@ -2669,6 +3079,14 @@ export default function MatchTrackerView({
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowOnPitchDialog(true)}
+                      className={`dc-on-pitch-btn ${onPitchSet ? 'active' : ''}`}
+                      title="Choose which players are currently on the pitch"
+                    >
+                      On Pitch{onPitchSet ? ` (${dcVisiblePlayers.length})` : ''}
+                    </button>
                     <button
                       type="button"
                       onClick={() => setDcPinEditMode((v) => !v)}
@@ -2709,14 +3127,29 @@ export default function MatchTrackerView({
                 )}
 
                 <div className="dc-tap-scroll">
-                  {dcPinnedPlayers.length > 0 && (
+                  {dcVisiblePlayers.length === 0 ? (
+                    <div className="dc-pin-hint" style={{ textAlign: 'center', padding: '1rem' }}>
+                      No players marked as on the pitch.{' '}
+                      <button
+                        type="button"
+                        className="dc-on-pitch-btn active"
+                        onClick={() => setShowOnPitchDialog(true)}
+                      >
+                        Select On-Pitch Players
+                      </button>
+                    </div>
+                  ) : (
                     <>
-                      <div className="dc-section-label"><Pin size={11} /> Pinned</div>
-                      <div className="dc-tap-grid">{dcPinnedPlayers.map(renderDCTile)}</div>
-                      {dcOtherPlayers.length > 0 && <div className="dc-section-label">Squad</div>}
+                      {dcPinnedPlayers.length > 0 && (
+                        <>
+                          <div className="dc-section-label"><Pin size={11} /> Pinned</div>
+                          <div className="dc-tap-grid">{dcPinnedPlayers.map(renderDCTile)}</div>
+                          {dcOtherPlayers.length > 0 && <div className="dc-section-label">Squad</div>}
+                        </>
+                      )}
+                      <div className="dc-tap-grid">{dcOtherPlayers.map(renderDCTile)}</div>
                     </>
                   )}
-                  <div className="dc-tap-grid">{dcOtherPlayers.map(renderDCTile)}</div>
                 </div>
 
                 <button onClick={closeDCDialog} className="btn btn-primary mt-3" style={{ width: '100%' }}>
@@ -2724,8 +3157,465 @@ export default function MatchTrackerView({
                 </button>
               </div>
             </div>
+        )}
+
+        {/* Unified Matchday Console Modal (Saves + DC + Shot Pitch Map) */}
+        {showUnifiedTracker && (() => {
+          const activeGk = goalkeepers.find((g) => g.id === activeUnifiedGkId) || goalkeepers[0] || null;
+          const isSaveJustTapped = activeGk && justTappedSaveId === activeGk.id;
+
+          return (
+            <div className="modal-overlay" onClick={() => setShowUnifiedTracker(false)}>
+              <div
+                className="modal-content unified-tracker-modal"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Sticky Header */}
+                <div className="unified-tracker-header">
+                  <div>
+                    <h3 className="title-md" style={{ marginBottom: 0 }}>Matchday Console</h3>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                      {activeMatch.opponent ? `vs ${activeMatch.opponent}` : 'Live match tracking'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowUnifiedTracker(false)}
+                    className="btn-icon"
+                    aria-label="Close"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Scrollable Body */}
+                <div className="unified-tracker-body">
+                  {/* 0. On Pitch Lineup Section */}
+                  <section className="unified-section">
+                    <div className="unified-section-header">
+                      <div className="unified-section-title">
+                        <Users size={16} style={{ color: '#0891b2' }} />
+                        <span>On Pitch</span>
+                        <span className="unified-section-badge dc">
+                          {onPitchSet ? `${onPitchPlayers.length}/${playersInMatch.length}` : `All (${playersInMatch.length})`}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="unified-gk-change-btn"
+                        onClick={() => setShowOnPitchDialog(true)}
+                      >
+                        Edit Lineup
+                      </button>
+                    </div>
+                    {onPitchSet ? (
+                      onPitchPlayers.length > 0 ? (
+                        <div className="unified-onpitch-pills">
+                          {onPitchPlayers.map((p) => (
+                            <span key={p.id} className="unified-onpitch-pill">{p.name}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="unified-gk-empty">No players marked on pitch. Tap Edit Lineup to select.</div>
+                      )
+                    ) : (
+                      <div className="unified-gk-empty">
+                        Showing all {playersInMatch.length} squad players. Tap Edit Lineup to filter to those on the pitch.
+                      </div>
+                    )}
+                  </section>
+
+                  {/* 1. Goalkeeper Save Bar */}
+                  <section className="unified-section unified-save-bar">
+                    <div className="unified-section-header">
+                      <div className="unified-section-title">
+                        <Shield size={16} style={{ color: '#b45309' }} />
+                        <span>Goalkeeper Saves</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="unified-gk-change-btn"
+                        onClick={() => setShowGkDialog(true)}
+                      >
+                        {goalkeepers.length > 0 ? 'Change GK' : 'Set Goalkeeper'}
+                      </button>
+                    </div>
+
+                    {goalkeepers.length === 0 ? (
+                      <div className="unified-gk-empty">
+                        <span>Assign a goalkeeper to record saves in 1 tap.</span>
+                      </div>
+                    ) : (
+                      <>
+                        {goalkeepers.length > 1 && (
+                          <div className="unified-gk-pills" role="group" aria-label="Active goalkeeper">
+                            {goalkeepers.map((gk) => (
+                              <button
+                                key={gk.id}
+                                type="button"
+                                className={activeGk?.id === gk.id ? 'active' : ''}
+                                onClick={() => setActiveUnifiedGkId(gk.id)}
+                              >
+                                {gk.name} ({gk.saves})
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {activeGk && (
+                          <div className="unified-save-controls">
+                            <div className="unified-gk-info">
+                              <span className="unified-gk-name">{activeGk.name}</span>
+                              <span className="unified-gk-count">{activeGk.saves} saves</span>
+                            </div>
+                            <div className="unified-save-actions">
+                              <button
+                                type="button"
+                                className={`unified-save-plus ${isSaveJustTapped ? 'just-tapped' : ''}`}
+                                onClick={() => recordUnifiedSave(activeGk.id)}
+                              >
+                                +1 Save
+                              </button>
+                              {activeGk.saves > 0 && (
+                                <button
+                                  type="button"
+                                  className="unified-save-minus"
+                                  onClick={() => updateMatchStat(activeMatch.id, activeGk.id, 'saves', -1)}
+                                  aria-label={`Decrease saves for ${activeGk.name}`}
+                                  title="Undo save"
+                                >
+                                  −
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+
+                  {/* 2. Defensive Contributions Section */}
+                  {showDC && (
+                    <section className="unified-section">
+                      <div className="unified-section-header">
+                        <div className="unified-section-title">
+                          <ShieldCheck size={16} style={{ color: '#0891b2' }} />
+                          <span>Defensive Contributions</span>
+                          <span className="unified-section-badge dc">{totalDC}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDcPinEditMode((v) => !v)}
+                          className={`btn-icon dc-pin-mode-btn ${dcPinEditMode ? 'active' : ''}`}
+                          title={dcPinEditMode ? 'Finish editing pinned players' : 'Edit pinned players'}
+                          aria-pressed={dcPinEditMode}
+                        >
+                          <Pin size={16} />
+                        </button>
+                      </div>
+
+                      <div className="dc-sort-toggle" role="group" aria-label="Player order">
+                        {[
+                          { id: 'smart', label: 'Smart' },
+                          { id: 'alpha', label: 'A–Z' },
+                          { id: 'position', label: 'Position' }
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            className={dcSortMode === opt.id ? 'active' : ''}
+                            onClick={() => changeDCSortMode(opt.id)}
+                            aria-pressed={dcSortMode === opt.id}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {dcPinEditMode && (
+                        <div className="dc-pin-hint">
+                          Tap players to pin/unpin them to the top. Tap the pin icon again when done.
+                        </div>
+                      )}
+
+                      {dcVisiblePlayers.length === 0 ? (
+                        <div className="dc-pin-hint" style={{ textAlign: 'center', padding: '1rem' }}>
+                          No players marked as on the pitch.{' '}
+                          <button
+                            type="button"
+                            className="dc-on-pitch-btn active"
+                            onClick={() => setShowOnPitchDialog(true)}
+                          >
+                            Select On-Pitch Players
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          {dcPinnedPlayers.length > 0 && (
+                            <>
+                              <div className="dc-section-label"><Pin size={11} /> Pinned</div>
+                              <div className="dc-tap-grid">{dcPinnedPlayers.map(renderDCTile)}</div>
+                              {dcOtherPlayers.length > 0 && <div className="dc-section-label">Squad</div>}
+                            </>
+                          )}
+                          <div className="dc-tap-grid">{dcOtherPlayers.map(renderDCTile)}</div>
+                        </>
+                      )}
+                    </section>
+                  )}
+
+                  {/* 3. Shot Pitch Map Section */}
+                  {showShotPitchMap && (
+                    <section className="unified-section">
+                      <div className="unified-section-header">
+                        <div className="unified-section-title">
+                          <Crosshair size={16} style={{ color: '#ea580c' }} />
+                          <span>Shot Tracker</span>
+                          <span className="unified-section-badge shot">{totalAttempts}</span>
+                        </div>
+                        {unifiedShotDraft && (
+                          <button
+                            type="button"
+                            className="unified-gk-change-btn"
+                            onClick={() => setUnifiedShotDraft(null)}
+                          >
+                            Reset to Pitch
+                          </button>
+                        )}
+                      </div>
+
+                      <div
+                        ref={shotStageRef}
+                        style={unifiedShotDraft?.minHeight ? { minHeight: `${unifiedShotDraft.minHeight}px` } : undefined}
+                      >
+                        {!unifiedShotDraft && (
+                          <PitchShotMap
+                            value={null}
+                            defaultScope="full"
+                            allowFullScroll
+                            existingShots={_attemptEvents}
+                            onChange={(loc) => {
+                              const measuredHeight = shotStageRef.current?.offsetHeight || null;
+                              setShowAllShotPlayers(false);
+                              setUnifiedShotDraft({
+                                step: 'player',
+                                location: loc,
+                                playerId: null,
+                                minHeight: measuredHeight
+                              });
+                            }}
+                          />
+                        )}
+
+                        {unifiedShotDraft?.step === 'player' && (
+                          <div>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.65rem' }}>
+                              Shot marked ({unifiedShotDraft.location.x}%, {unifiedShotDraft.location.y}%) — select player:
+                            </p>
+                            <div className="shot-player-grid">
+                              {shotSelectablePlayers.map((player) => (
+                                <button
+                                  key={player.id}
+                                  type="button"
+                                  className="shot-player-tile"
+                                  onClick={() =>
+                                    setUnifiedShotDraft((prev) =>
+                                      prev ? { ...prev, playerId: player.id, step: 'outcome' } : prev
+                                    )
+                                  }
+                                >
+                                  <div className="avatar" style={{ width: '1.8rem', height: '1.8rem', fontSize: '0.78rem', flexShrink: 0 }}>
+                                    {player.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <span className="shot-player-name">{player.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                            {onPitchSet && (
+                              <button
+                                type="button"
+                                className="shot-show-all-btn"
+                                onClick={() => setShowAllShotPlayers((v) => !v)}
+                              >
+                                {showAllShotPlayers
+                                  ? `Show on-pitch only (${onPitchPlayers.length})`
+                                  : `Show all squad (${playersInMatch.length})`}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn btn-secondary mt-3"
+                              style={{ width: '100%' }}
+                              onClick={() => setUnifiedShotDraft(null)}
+                            >
+                              Back to Pitch
+                            </button>
+                          </div>
+                        )}
+
+                        {unifiedShotDraft?.step === 'outcome' && (
+                          <div>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.7rem' }}>
+                              Outcome for{' '}
+                              <strong>{playersInMatch.find((p) => p.id === unifiedShotDraft.playerId)?.name}</strong>:
+                            </p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                              <div onClick={() => handleUnifiedShotOutcome('scored')} className="attempt-choice-card scored">
+                                <div className="attempt-choice-icon scored">⚽</div>
+                                <div className="attempt-choice-text">
+                                  <span className="attempt-choice-title scored">Scored (Goal)</span>
+                                  <span className="attempt-choice-desc">Logs goal, adds attempt, and assigns assist</span>
+                                </div>
+                              </div>
+                              <div onClick={() => handleUnifiedShotOutcome('saved')} className="attempt-choice-card saved">
+                                <div className="attempt-choice-icon saved">🧤</div>
+                                <div className="attempt-choice-text">
+                                  <span className="attempt-choice-title saved">Saved</span>
+                                  <span className="attempt-choice-desc">Shot on target saved by opposition goalkeeper</span>
+                                </div>
+                              </div>
+                              <div onClick={() => handleUnifiedShotOutcome('missed')} className="attempt-choice-card missed">
+                                <div className="attempt-choice-icon missed">❌</div>
+                                <div className="attempt-choice-text">
+                                  <span className="attempt-choice-title missed">Missed (Off Target)</span>
+                                  <span className="attempt-choice-desc">Shot wide or over the crossbar</span>
+                                </div>
+                              </div>
+                              <div onClick={() => handleUnifiedShotOutcome('blocked')} className="attempt-choice-card blocked">
+                                <div className="attempt-choice-icon blocked">🛡️</div>
+                                <div className="attempt-choice-text">
+                                  <span className="attempt-choice-title blocked">Blocked</span>
+                                  <span className="attempt-choice-desc">Shot blocked by an outfield defender</span>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-secondary mt-3"
+                              style={{ width: '100%' }}
+                              onClick={() =>
+                                setUnifiedShotDraft((prev) =>
+                                  prev ? { ...prev, step: 'player' } : prev
+                                )
+                              }
+                            >
+                              Back to Player
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </div>
+            </div>
           );
         })()}
+
+        {/* On-Pitch Players Selection Modal (for DC tracking) */}
+        {showOnPitchDialog && (
+          <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowOnPitchDialog(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="flex-between mb-2">
+                <div>
+                  <h3 className="title-md" style={{ marginBottom: 0 }}>Players on the Pitch</h3>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                    Only selected players appear in Defensive Contributions
+                  </span>
+                </div>
+                <button onClick={() => setShowOnPitchDialog(false)} className="btn-icon" aria-label="Close">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>
+                  {onPitchSet ? `${dcVisiblePlayers.length} of ${playersInMatch.length} on pitch` : `All ${playersInMatch.length} players shown`}
+                </span>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button
+                    type="button"
+                    className="unified-gk-change-btn"
+                    onClick={() => persistOnPitchIds([])}
+                  >
+                    Clear All
+                  </button>
+                  <button
+                    type="button"
+                    className="unified-gk-change-btn"
+                    onClick={() => persistOnPitchIds(null)}
+                  >
+                    Show All
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ maxHeight: '52vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingRight: '0.2rem' }}>
+                {playersInMatch.map((player) => {
+                  const isOnPitch = !onPitchSet || onPitchSet.has(String(player.id));
+                  return (
+                    <div
+                      key={player.id}
+                      onClick={() => toggleOnPitchPlayer(player.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0.65rem 0.85rem',
+                        cursor: 'pointer',
+                        background: isOnPitch ? 'rgba(8, 145, 178, 0.1)' : 'var(--color-bg-card)',
+                        border: `1.5px solid ${isOnPitch ? '#0891b2' : 'var(--color-border-light)'}`,
+                        borderRadius: 'var(--radius-xl)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                        <div
+                          className="avatar"
+                          style={{
+                            background: isOnPitch ? '#0891b2' : 'var(--color-border-light)',
+                            color: isOnPitch ? '#ffffff' : 'var(--color-text-muted)',
+                            width: '1.9rem',
+                            height: '1.9rem',
+                            fontSize: '0.82rem',
+                            flexShrink: 0
+                          }}
+                        >
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.88rem', color: isOnPitch ? '#0891b2' : 'var(--color-text-main)' }}>
+                            {player.name}
+                          </div>
+                          {!teamInfo.hide_positions && player.position && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+                              {player.position}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <span style={{
+                        fontSize: '0.74rem',
+                        fontWeight: 700,
+                        color: isOnPitch ? '#ffffff' : 'var(--color-text-light)',
+                        backgroundColor: isOnPitch ? '#0891b2' : 'transparent',
+                        padding: '0.22rem 0.6rem',
+                        borderRadius: 'var(--radius-full)',
+                        border: isOnPitch ? 'none' : '1px solid var(--color-border)'
+                      }}>
+                        {isOnPitch ? 'On Pitch' : 'Sub / Off'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setShowOnPitchDialog(false)} className="btn btn-primary mt-3" style={{ width: '100%' }}>
+                Done
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Column Order Preferences Modal */}
         {showColumnOrderModal && (
